@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DatabaseModule } from './database/database.module';
 import { IBModule } from './ib/ib.module';
+import { DataModule } from './data/data.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { IBModule } from './ib/ib.module';
     ScheduleModule.forRoot(),
     DatabaseModule,
     IBModule,
+    DataModule,
   ],
   controllers: [],
   providers: [],
