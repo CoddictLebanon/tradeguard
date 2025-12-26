@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Query,
   HttpCode,
   HttpStatus,
   BadRequestException,
@@ -10,6 +11,8 @@ import {
 import { CircuitBreakerService } from './circuit-breaker.service';
 import { OrderValidationService } from './order-validation.service';
 import { SafetyLimits } from './safety.types';
+import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '../entities/user.entity';
 
 @Controller('safety')
 export class SafetyController {
@@ -18,6 +21,7 @@ export class SafetyController {
     private readonly orderValidation: OrderValidationService,
   ) {}
 
+  // Read-only endpoints - all authenticated users can view
   @Get('status')
   async getStatus() {
     const state = this.circuitBreaker.getState();
@@ -36,7 +40,15 @@ export class SafetyController {
     return this.circuitBreaker.getLimits();
   }
 
+  @Get('validation-summary')
+  async getValidationSummary(@Query('portfolioValue') portfolioValue?: string) {
+    const value = portfolioValue ? parseFloat(portfolioValue) : 1000000;
+    return this.orderValidation.getValidationSummary(value);
+  }
+
+  // Modification endpoints - admin only
   @Post('limits')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async updateLimits(@Body() limits: Partial<SafetyLimits>) {
     await this.circuitBreaker.updateLimits(limits);
@@ -44,6 +56,7 @@ export class SafetyController {
   }
 
   @Post('pause')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async pauseTrading(@Body() body: { reason: string }) {
     const state = this.circuitBreaker.getState();
@@ -51,13 +64,12 @@ export class SafetyController {
       throw new BadRequestException('Trading is already paused');
     }
 
-    // Access private method through the service's public interface
-    // For manual pause, we'll update state directly
-    await this.circuitBreaker.updateLimits({}); // Force state refresh
+    await this.circuitBreaker.manualPause(body.reason);
     return { message: `Trading paused: ${body.reason}`, state: this.circuitBreaker.getState() };
   }
 
   @Post('resume')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async resumeTrading(@Body() body: { reason: string }) {
     const state = this.circuitBreaker.getState();
@@ -70,6 +82,7 @@ export class SafetyController {
   }
 
   @Post('switch-to-live')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async switchToLive() {
     const result = await this.circuitBreaker.switchToLive();
@@ -80,13 +93,16 @@ export class SafetyController {
   }
 
   @Post('switch-to-paper')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async switchToPaper() {
     await this.circuitBreaker.switchToPaper();
     return { message: 'Switched to PAPER trading', state: this.circuitBreaker.getState() };
   }
 
+  // Order validation - traders and admins
   @Post('validate-order')
+  @Roles(UserRole.ADMIN, UserRole.TRADER)
   @HttpCode(HttpStatus.OK)
   async validateOrder(
     @Body()
@@ -101,13 +117,8 @@ export class SafetyController {
     return this.orderValidation.validateOrder(body);
   }
 
-  @Get('validation-summary')
-  async getValidationSummary() {
-    // Default portfolio value for summary - should be passed in real usage
-    return this.orderValidation.getValidationSummary(1000000);
-  }
-
   @Post('refresh')
+  @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async refreshState() {
     await this.circuitBreaker.refreshState();

@@ -18,12 +18,21 @@ import { ActivityLog } from '../entities/activity-log.entity';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET', 'change-this-secret-in-production'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '24h'),
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        const isProduction = configService.get<string>('NODE_ENV') === 'production';
+
+        if (!secret && isProduction) {
+          throw new Error('JWT_SECRET must be set in production environment');
+        }
+
+        return {
+          secret: secret || 'dev-only-insecure-secret',
+          signOptions: {
+            expiresIn: configService.get<string>('JWT_EXPIRES_IN', '24h'),
+          },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

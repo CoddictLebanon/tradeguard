@@ -293,6 +293,28 @@ export class CircuitBreakerService {
     this.logger.warn(`TRADING PAUSED: ${message}`);
   }
 
+  async manualPause(reason: string): Promise<void> {
+    this.state.isPaused = true;
+    this.state.pauseReason = `manual: ${reason}`;
+    this.state.pauseUntil = null;
+    await this.saveState();
+
+    await this.activityRepo.save({
+      type: ActivityType.CIRCUIT_BREAKER,
+      message: `Trading manually paused: ${reason}`,
+      details: { reason, manual: true },
+    });
+
+    this.eventEmitter.emit('circuit.breaker', {
+      event: CircuitBreakerEvent.TRADING_PAUSED,
+      reason: `manual: ${reason}`,
+      message: reason,
+      manual: true,
+    });
+
+    this.logger.warn(`TRADING MANUALLY PAUSED: ${reason}`);
+  }
+
   async resumeTrading(reason: string): Promise<void> {
     this.state.isPaused = false;
     this.state.pauseReason = null;

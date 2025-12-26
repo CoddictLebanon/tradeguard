@@ -11,7 +11,9 @@ import {
 import { AuthService, AuthResponse } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from './public.decorator';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { Roles } from './roles.decorator';
+import { UserRole } from '../entities/user.entity';
+import { IsEmail, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
 
 class LoginDto {
   @IsEmail()
@@ -22,9 +24,21 @@ class LoginDto {
   password: string;
 }
 
-class RegisterDto extends LoginDto {
+class CreateUserDto {
+  @IsEmail()
+  email: string;
+
   @IsString()
+  @MinLength(8)
+  password: string;
+
+  @IsString()
+  @IsOptional()
   name?: string;
+
+  @IsEnum(UserRole)
+  @IsOptional()
+  role?: UserRole;
 }
 
 class ChangePasswordDto {
@@ -48,10 +62,11 @@ export class AuthController {
     return this.authService.login(dto.email, dto.password);
   }
 
-  @Public()
-  @Post('register')
-  async register(@Body() dto: RegisterDto): Promise<AuthResponse> {
-    return this.authService.register(dto.email, dto.password, dto.name);
+  // Only admins can create new users - no public registration for trading system
+  @Post('users')
+  @Roles(UserRole.ADMIN)
+  async createUser(@Body() dto: CreateUserDto): Promise<AuthResponse> {
+    return this.authService.register(dto.email, dto.password, dto.name, dto.role);
   }
 
   @UseGuards(JwtAuthGuard)
