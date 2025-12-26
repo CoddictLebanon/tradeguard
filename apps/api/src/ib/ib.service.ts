@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { IBApi, EventName, Contract, Order, OrderAction, OrderType, SecType } from '@stoqey/ib';
@@ -8,6 +8,7 @@ import {
   IBPosition,
   IBConnectionStatus,
 } from './ib.types';
+import { CircuitBreakerService } from '../safety/circuit-breaker.service';
 
 @Injectable()
 export class IBService implements OnModuleInit, OnModuleDestroy {
@@ -17,10 +18,13 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
   private connectionStatus: IBConnectionStatus = IBConnectionStatus.DISCONNECTED;
   private accountId: string;
   private nextOrderId: number = 0;
+  private paperOrderId: number = 100000; // Paper trading order IDs start at 100000
 
   constructor(
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => CircuitBreakerService))
+    private readonly circuitBreaker: CircuitBreakerService,
   ) {
     this.config = {
       host: this.configService.get<string>('IB_HOST', '127.0.0.1'),
@@ -210,6 +214,11 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     quantity: number,
     limitPrice?: number,
   ): Promise<number> {
+    // Check if we're in paper trading mode
+    if (this.circuitBreaker.isPaperMode()) {
+      return this.simulateBuyOrder(symbol, quantity, limitPrice);
+    }
+
     const contract = this.createStockContract(symbol);
     const orderId = this.getNextOrderId();
 
@@ -228,11 +237,59 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     return orderId;
   }
 
+  private async simulateBuyOrder(
+    symbol: string,
+    quantity: number,
+    limitPrice?: number,
+  ): Promise<number> {
+    const orderId = this.paperOrderId++;
+    const fillPrice = limitPrice || (await this.getSimulatedPrice(symbol));
+
+    this.logger.log(`[PAPER] Simulated BUY order ${orderId}: ${quantity} ${symbol} @ ${fillPrice}`);
+
+    // Emit simulated order status events
+    setTimeout(() => {
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId,
+        status: 'Filled',
+        filled: quantity,
+        remaining: 0,
+        avgFillPrice: fillPrice,
+        isPaper: true,
+      });
+
+      this.eventEmitter.emit('ib.execution', {
+        reqId: orderId,
+        contract: { symbol },
+        execution: {
+          side: 'BUY',
+          shares: quantity,
+          price: fillPrice,
+          orderId,
+          isPaper: true,
+        },
+      });
+    }, 100); // Small delay to simulate network latency
+
+    return orderId;
+  }
+
+  private async getSimulatedPrice(symbol: string): Promise<number> {
+    // In paper mode, we might not have IB connection
+    // Return a reasonable simulated price or use Polygon data
+    return 100; // Placeholder - should integrate with data service
+  }
+
   async placeSellOrder(
     symbol: string,
     quantity: number,
     limitPrice?: number,
   ): Promise<number> {
+    // Check if we're in paper trading mode
+    if (this.circuitBreaker.isPaperMode()) {
+      return this.simulateSellOrder(symbol, quantity, limitPrice);
+    }
+
     const contract = this.createStockContract(symbol);
     const orderId = this.getNextOrderId();
 
@@ -251,11 +308,52 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     return orderId;
   }
 
+  private async simulateSellOrder(
+    symbol: string,
+    quantity: number,
+    limitPrice?: number,
+  ): Promise<number> {
+    const orderId = this.paperOrderId++;
+    const fillPrice = limitPrice || (await this.getSimulatedPrice(symbol));
+
+    this.logger.log(`[PAPER] Simulated SELL order ${orderId}: ${quantity} ${symbol} @ ${fillPrice}`);
+
+    setTimeout(() => {
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId,
+        status: 'Filled',
+        filled: quantity,
+        remaining: 0,
+        avgFillPrice: fillPrice,
+        isPaper: true,
+      });
+
+      this.eventEmitter.emit('ib.execution', {
+        reqId: orderId,
+        contract: { symbol },
+        execution: {
+          side: 'SELL',
+          shares: quantity,
+          price: fillPrice,
+          orderId,
+          isPaper: true,
+        },
+      });
+    }, 100);
+
+    return orderId;
+  }
+
   async placeTrailingStopOrder(
     symbol: string,
     quantity: number,
     trailPercent: number,
   ): Promise<number> {
+    // Check if we're in paper trading mode
+    if (this.circuitBreaker.isPaperMode()) {
+      return this.simulateTrailingStopOrder(symbol, quantity, trailPercent);
+    }
+
     const contract = this.createStockContract(symbol);
     const orderId = this.getNextOrderId();
 
@@ -274,7 +372,44 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     return orderId;
   }
 
+  private simulateTrailingStopOrder(
+    symbol: string,
+    quantity: number,
+    trailPercent: number,
+  ): number {
+    const orderId = this.paperOrderId++;
+
+    this.logger.log(`[PAPER] Simulated TRAIL STOP order ${orderId}: ${quantity} ${symbol} @ ${trailPercent}%`);
+
+    // In paper mode, trailing stops are tracked but not immediately filled
+    this.eventEmitter.emit('ib.orderStatus', {
+      orderId,
+      status: 'PreSubmitted',
+      filled: 0,
+      remaining: quantity,
+      avgFillPrice: 0,
+      isPaper: true,
+      trailPercent,
+    });
+
+    return orderId;
+  }
+
   async cancelOrder(orderId: number): Promise<void> {
+    // Paper orders (ID >= 100000) don't need real cancellation
+    if (orderId >= 100000) {
+      this.logger.log(`[PAPER] Cancelled order ${orderId}`);
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId,
+        status: 'Cancelled',
+        filled: 0,
+        remaining: 0,
+        avgFillPrice: 0,
+        isPaper: true,
+      });
+      return;
+    }
+
     this.ib.cancelOrder(orderId);
     this.logger.log(`Cancelled order ${orderId}`);
   }
@@ -285,6 +420,21 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     quantity: number,
     trailPercent: number,
   ): Promise<void> {
+    // Paper orders (ID >= 100000) - just log the modification
+    if (orderId >= 100000) {
+      this.logger.log(`[PAPER] Modified TRAIL STOP order ${orderId}: ${trailPercent}%`);
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId,
+        status: 'PreSubmitted',
+        filled: 0,
+        remaining: quantity,
+        avgFillPrice: 0,
+        isPaper: true,
+        trailPercent,
+      });
+      return;
+    }
+
     const contract = this.createStockContract(symbol);
 
     const order: Order = {
@@ -298,6 +448,14 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
 
     this.ib.placeOrder(orderId, contract, order);
     this.logger.log(`Modified TRAIL STOP order ${orderId}: ${trailPercent}%`);
+  }
+
+  isPaperMode(): boolean {
+    return this.circuitBreaker.isPaperMode();
+  }
+
+  getTradingMode(): 'paper' | 'live' {
+    return this.circuitBreaker.getTradingMode();
   }
 
   async getQuote(symbol: string): Promise<{ bid: number; ask: number; last: number }> {
