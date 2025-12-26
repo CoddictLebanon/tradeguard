@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DatabaseModule } from './database/database.module';
+import { IBModule } from './ib/ib.module';
 
 @Module({
   imports: [
@@ -9,8 +11,10 @@ import { DatabaseModule } from './database/database.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     DatabaseModule,
+    IBModule,
   ],
   controllers: [],
   providers: [],
