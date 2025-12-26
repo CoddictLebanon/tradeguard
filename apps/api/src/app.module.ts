@@ -5,6 +5,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DatabaseModule } from './database/database.module';
 import { IBModule } from './ib/ib.module';
 import { DataModule } from './data/data.module';
+import { StrategyModule } from './strategy/strategy.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DataModule } from './data/data.module';
     DatabaseModule,
     IBModule,
     DataModule,
+    StrategyModule,
   ],
   controllers: [],
   providers: [],
