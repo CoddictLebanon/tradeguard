@@ -7,20 +7,38 @@ import {
   Param,
   HttpException,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { IBService } from './ib.service';
 import { PlaceBuyOrderDto, PlaceSellOrderDto, ModifyStopDto } from './dto/place-order.dto';
+import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '../entities/user.entity';
+import { OrderValidationService } from '../safety/order-validation.service';
 
 @Controller('ib')
 export class IBController {
-  constructor(private readonly ibService: IBService) {}
+  constructor(
+    private readonly ibService: IBService,
+    private readonly orderValidation: OrderValidationService,
+  ) {}
 
   @Get('status')
   getStatus() {
     return {
       connected: this.ibService.isConnected(),
       status: this.ibService.getConnectionStatus(),
+      tradingMode: this.ibService.getTradingMode(),
     };
+  }
+
+  private requireConnection(): void {
+    // Paper mode doesn't require IB connection
+    if (this.ibService.isPaperMode()) {
+      return;
+    }
+    if (!this.ibService.isConnected()) {
+      throw new HttpException('Not connected to IB', HttpStatus.SERVICE_UNAVAILABLE);
+    }
   }
 
   @Get('account')
@@ -48,34 +66,70 @@ export class IBController {
   }
 
   @Post('order/buy')
+  @Roles(UserRole.ADMIN, UserRole.TRADER)
   async placeBuyOrder(@Body() dto: PlaceBuyOrderDto) {
-    if (!this.ibService.isConnected()) {
-      throw new HttpException('Not connected to IB', HttpStatus.SERVICE_UNAVAILABLE);
+    this.requireConnection();
+
+    // Validate order before placement
+    const price = dto.limitPrice || 100; // Use limit price or estimate
+    const portfolioValue = 1000000; // TODO: Get from account summary
+    const validation = await this.orderValidation.validateBuyOrder(
+      dto.symbol.toUpperCase(),
+      dto.quantity,
+      price,
+      portfolioValue,
+    );
+
+    if (!validation.valid) {
+      throw new HttpException(
+        { message: 'Order validation failed', errors: validation.errors },
+        HttpStatus.BAD_REQUEST,
+      );
     }
+
+    const quantity = validation.adjustedQuantity || dto.quantity;
 
     const buyOrderId = await this.ibService.placeBuyOrder(
       dto.symbol.toUpperCase(),
-      dto.quantity,
+      quantity,
       dto.limitPrice,
     );
 
     const stopOrderId = await this.ibService.placeTrailingStopOrder(
       dto.symbol.toUpperCase(),
-      dto.quantity,
+      quantity,
       dto.trailPercent,
     );
 
     return {
       buyOrderId,
       stopOrderId,
+      quantity,
+      warnings: validation.warnings,
       message: `Buy order placed with trailing stop at ${dto.trailPercent}%`,
     };
   }
 
   @Post('order/sell')
+  @Roles(UserRole.ADMIN, UserRole.TRADER)
   async placeSellOrder(@Body() dto: PlaceSellOrderDto) {
-    if (!this.ibService.isConnected()) {
-      throw new HttpException('Not connected to IB', HttpStatus.SERVICE_UNAVAILABLE);
+    this.requireConnection();
+
+    // Validate sell order
+    const price = dto.limitPrice || 100;
+    const portfolioValue = 1000000;
+    const validation = await this.orderValidation.validateSellOrder(
+      dto.symbol.toUpperCase(),
+      dto.quantity,
+      price,
+      portfolioValue,
+    );
+
+    if (!validation.valid) {
+      throw new HttpException(
+        { message: 'Order validation failed', errors: validation.errors },
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const orderId = await this.ibService.placeSellOrder(
@@ -84,14 +138,13 @@ export class IBController {
       dto.limitPrice,
     );
 
-    return { orderId };
+    return { orderId, warnings: validation.warnings };
   }
 
   @Post('order/modify-stop')
+  @Roles(UserRole.ADMIN, UserRole.TRADER)
   async modifyStop(@Body() dto: ModifyStopDto) {
-    if (!this.ibService.isConnected()) {
-      throw new HttpException('Not connected to IB', HttpStatus.SERVICE_UNAVAILABLE);
-    }
+    this.requireConnection();
 
     await this.ibService.modifyTrailingStop(
       dto.orderId,
@@ -104,16 +157,16 @@ export class IBController {
   }
 
   @Delete('order/:orderId')
+  @Roles(UserRole.ADMIN, UserRole.TRADER)
   async cancelOrder(@Param('orderId') orderId: string) {
-    if (!this.ibService.isConnected()) {
-      throw new HttpException('Not connected to IB', HttpStatus.SERVICE_UNAVAILABLE);
-    }
+    this.requireConnection();
 
     await this.ibService.cancelOrder(parseInt(orderId, 10));
     return { message: 'Order cancelled' };
   }
 
   @Post('reconnect')
+  @Roles(UserRole.ADMIN)
   async reconnect() {
     await this.ibService.disconnect();
     await this.ibService.connect();

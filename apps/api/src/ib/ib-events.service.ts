@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { Position, PositionStatus } from '../entities/position.entity';
 import { Trade, ExitReason } from '../entities/trade.entity';
 import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
@@ -12,6 +12,7 @@ interface OrderStatusEvent {
   filled: number;
   remaining: number;
   avgFillPrice: number;
+  isPaper?: boolean;
 }
 
 interface ExecutionEvent {
@@ -22,12 +23,14 @@ interface ExecutionEvent {
     shares: number;
     price: number;
     orderId: number;
+    isPaper?: boolean;
   };
 }
 
 @Injectable()
 export class IBEventsService {
   private readonly logger = new Logger(IBEventsService.name);
+  private processingOrders = new Set<number>(); // Prevent race conditions
 
   constructor(
     @InjectRepository(Position)
@@ -36,16 +39,30 @@ export class IBEventsService {
     private tradeRepo: Repository<Trade>,
     @InjectRepository(ActivityLog)
     private activityRepo: Repository<ActivityLog>,
+    private readonly dataSource: DataSource,
   ) {}
 
   @OnEvent('ib.orderStatus')
   async handleOrderStatus(event: OrderStatusEvent) {
-    this.logger.log(`Order ${event.orderId} status: ${event.status}`);
+    const prefix = event.isPaper ? '[PAPER] ' : '';
+    this.logger.log(`${prefix}Order ${event.orderId} status: ${event.status}`);
 
-    if (event.status === 'Filled') {
-      await this.handleOrderFilled(event);
-    } else if (event.status === 'Cancelled') {
-      await this.handleOrderCancelled(event);
+    // Prevent processing the same order concurrently
+    if (this.processingOrders.has(event.orderId)) {
+      this.logger.warn(`Order ${event.orderId} is already being processed, skipping`);
+      return;
+    }
+
+    try {
+      this.processingOrders.add(event.orderId);
+
+      if (event.status === 'Filled') {
+        await this.handleOrderFilled(event);
+      } else if (event.status === 'Cancelled') {
+        await this.handleOrderCancelled(event);
+      }
+    } finally {
+      this.processingOrders.delete(event.orderId);
     }
   }
 
@@ -115,29 +132,32 @@ export class IBEventsService {
     const pnl = (exitPrice - Number(position.entryPrice)) * position.shares;
     const pnlPercent = ((exitPrice - Number(position.entryPrice)) / Number(position.entryPrice)) * 100;
 
-    // Create trade record
-    await this.tradeRepo.save({
-      symbol: position.symbol,
-      entryPrice: position.entryPrice,
-      exitPrice,
-      shares: position.shares,
-      pnl,
-      pnlPercent,
-      openedAt: position.openedAt,
-      closedAt: new Date(),
-      exitReason,
-    });
+    // Use transaction to ensure atomicity
+    await this.dataSource.transaction(async (manager) => {
+      // Create trade record
+      await manager.save(Trade, {
+        symbol: position.symbol,
+        entryPrice: position.entryPrice,
+        exitPrice,
+        shares: position.shares,
+        pnl,
+        pnlPercent,
+        openedAt: position.openedAt,
+        closedAt: new Date(),
+        exitReason,
+      });
 
-    // Update position
-    position.status = PositionStatus.CLOSED;
-    position.closedAt = new Date();
-    await this.positionRepo.save(position);
+      // Update position
+      position.status = PositionStatus.CLOSED;
+      position.closedAt = new Date();
+      await manager.save(Position, position);
 
-    await this.activityRepo.save({
-      type: ActivityType.POSITION_CLOSED,
-      message: `Closed ${position.symbol}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
-      symbol: position.symbol,
-      details: { positionId: position.id, exitPrice, pnl, pnlPercent, exitReason },
+      await manager.save(ActivityLog, {
+        type: ActivityType.POSITION_CLOSED,
+        message: `Closed ${position.symbol}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
+        symbol: position.symbol,
+        details: { positionId: position.id, exitPrice, pnl, pnlPercent, exitReason },
+      });
     });
 
     this.logger.log(
