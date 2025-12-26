@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { DatabaseModule } from './database/database.module';
 
 @Module({
   imports: [
@@ -9,6 +10,7 @@ import { ScheduleModule } from '@nestjs/schedule';
       envFilePath: '.env',
     }),
     ScheduleModule.forRoot(),
+    DatabaseModule,
   ],
   controllers: [],
   providers: [],
