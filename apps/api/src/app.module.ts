@@ -9,6 +9,7 @@ import { StrategyModule } from './strategy/strategy.module';
 import { AIModule } from './ai/ai.module';
 import { ScannerModule } from './scanner/scanner.module';
 import { SafetyModule } from './safety/safety.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { SafetyModule } from './safety/safety.module';
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     DatabaseModule,
+    AuthModule,
     IBModule,
     DataModule,
     StrategyModule,
