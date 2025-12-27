@@ -66,8 +66,8 @@ export class EarningsCalendarService {
       return { hasEarnings: false };
     } catch (error) {
       this.logger.error(`Failed to check earnings for ${symbol}: ${(error as Error).message}`);
-      // Fail safe - if we can't check, assume there might be earnings
-      return { hasEarnings: false };
+      // Fail safe - block trades when uncertain (conservative approach)
+      return { hasEarnings: true };
     }
   }
 }
