@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { StockQuote, StockBar, NewsArticle, TechnicalIndicators } from './data.types';
+import { StockQuote, StockBar, NewsArticle, TechnicalIndicators, ExtendedTechnicalIndicators } from './data.types';
 
 @Injectable()
 export class PolygonService {
@@ -135,6 +135,61 @@ export class PolygonService {
       volume20Avg,
       volumeRatio,
     };
+  }
+
+  async getExtendedIndicators(symbol: string): Promise<ExtendedTechnicalIndicators> {
+    // Need 220 days to calculate 200-day MA slope
+    const bars = await this.getBars(symbol, 'day', 220);
+
+    if (bars.length < 200) {
+      throw new Error(`Insufficient data for ${symbol}: need 200 days, got ${bars.length}`);
+    }
+
+    const currentPrice = bars[bars.length - 1].close;
+
+    // Calculate SMAs
+    const sma20 = this.calculateSMA(bars.slice(-20));
+    const sma50 = this.calculateSMA(bars.slice(-50));
+    const sma200 = this.calculateSMA(bars.slice(-200));
+
+    // Calculate 200-day MA slope (compare current to 20 days ago)
+    const sma200_20daysAgo = this.calculateSMA(bars.slice(-220, -20));
+    const sma200Slope = ((sma200 - sma200_20daysAgo) / sma200_20daysAgo) * 100;
+
+    // RSI and ATR
+    const rsi = this.calculateRSI(bars.slice(-15));
+    const atr = this.calculateATR(bars.slice(-15));
+    const atrPercent = (atr / currentPrice) * 100;
+
+    // Volume
+    const volume20Avg = bars.slice(-20).reduce((sum, bar) => sum + bar.volume, 0) / 20;
+    const currentVolume = bars[bars.length - 1].volume;
+    const volumeRatio = currentVolume / volume20Avg;
+
+    // Price vs MAs
+    const priceVsSma20Percent = ((currentPrice - sma20) / sma20) * 100;
+    const priceVsSma50Percent = ((currentPrice - sma50) / sma50) * 100;
+    const priceVsSma200Percent = ((currentPrice - sma200) / sma200) * 100;
+
+    return {
+      sma20,
+      sma50,
+      sma200,
+      sma200Slope,
+      rsi,
+      atr,
+      atrPercent,
+      volume20Avg,
+      volumeRatio,
+      priceVsSma20Percent,
+      priceVsSma50Percent,
+      priceVsSma200Percent,
+    };
+  }
+
+  private calculateSMA(bars: StockBar[]): number {
+    if (bars.length === 0) return 0;
+    return bars.reduce((sum, bar) => sum + bar.close, 0) / bars.length;
   }
 
   private calculateRSI(bars: StockBar[]): number {

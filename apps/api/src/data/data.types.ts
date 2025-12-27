@@ -40,3 +40,12 @@ export interface TechnicalIndicators {
   volume20Avg: number;
   volumeRatio: number;
 }
+
+export interface ExtendedTechnicalIndicators extends TechnicalIndicators {
+  sma200: number;
+  sma200Slope: number;        // Positive = rising
+  priceVsSma200Percent: number;
+  priceVsSma20Percent: number;
+  priceVsSma50Percent: number;
+  atrPercent: number;         // ATR as % of current price
+}
