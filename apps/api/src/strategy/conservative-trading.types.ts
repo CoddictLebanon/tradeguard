@@ -70,21 +70,6 @@ export interface TradeQualification {
   estimatedUpsidePercent?: number;
 }
 
-export interface ExtendedTechnicalIndicators {
-  sma20: number;
-  sma50: number;
-  sma200: number;
-  sma200Slope: number;      // Positive = rising, negative = declining
-  rsi14: number;
-  atr14: number;
-  atrPercent: number;       // ATR as % of price
-  avgDailyVolume: number;   // 20-day average
-  currentVolume: number;
-  priceVsSma20Percent: number;
-  priceVsSma50Percent: number;
-  priceVsSma200Percent: number;
-}
-
 export interface TradeLogEntry {
   id: string;
   timestamp: Date;

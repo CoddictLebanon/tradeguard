@@ -1,13 +1,8 @@
 // apps/api/src/strategy/trade-setup.service.ts
 
 import { Injectable, Logger } from '@nestjs/common';
-import { PolygonService } from '../data/polygon.service';
 import { ExtendedTechnicalIndicators } from '../data/data.types';
-import {
-  TradeSetupType,
-  TradeQualification,
-  TradeRejectionReason,
-} from './conservative-trading.types';
+import { TradeSetupType } from './conservative-trading.types';
 
 interface SetupDetectionResult {
   hasSetup: boolean;
@@ -21,8 +16,6 @@ interface SetupDetectionResult {
 @Injectable()
 export class TradeSetupService {
   private readonly logger = new Logger(TradeSetupService.name);
-
-  constructor(private readonly polygonService: PolygonService) {}
 
   async detectSetup(
     symbol: string,
