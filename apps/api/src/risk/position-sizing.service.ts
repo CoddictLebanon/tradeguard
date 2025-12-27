@@ -1,6 +1,6 @@
 // apps/api/src/risk/position-sizing.service.ts
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Setting } from '../entities/settings.entity';
@@ -22,7 +22,7 @@ export interface PositionSizeResult {
 }
 
 @Injectable()
-export class PositionSizingService {
+export class PositionSizingService implements OnModuleInit {
   private readonly logger = new Logger(PositionSizingService.name);
   private accountConfig: AccountConfig = DEFAULT_ACCOUNT_CONFIG;
   private riskLimits: RiskLimits = DEFAULT_RISK_LIMITS;
@@ -30,8 +30,10 @@ export class PositionSizingService {
   constructor(
     @InjectRepository(Setting)
     private settingRepo: Repository<Setting>,
-  ) {
-    this.loadConfig();
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.loadConfig();
   }
 
   private async loadConfig(): Promise<void> {
@@ -59,6 +61,34 @@ export class PositionSizingService {
     stopPrice: number,
     currentCapitalDeployed: number,
   ): PositionSizeResult {
+    // Input validation
+    if (entryPrice <= 0 || stopPrice <= 0) {
+      return {
+        valid: false,
+        reason: 'Entry and stop prices must be positive',
+        positionSizeDollars: 0,
+        shares: 0,
+        maxDollarRisk: 0,
+        stopDistancePercent: 0,
+        capitalDeploymentPercent: 0,
+      };
+    }
+
+    if (stopPrice >= entryPrice) {
+      return {
+        valid: false,
+        reason: 'Stop price must be below entry price for long positions',
+        positionSizeDollars: 0,
+        shares: 0,
+        maxDollarRisk: 0,
+        stopDistancePercent: 0,
+        capitalDeploymentPercent: 0,
+      };
+    }
+
+    // Sanitize negative capital deployed
+    const sanitizedCapitalDeployed = Math.max(0, currentCapitalDeployed);
+
     // Calculate stop distance
     const stopDistance = Math.abs(entryPrice - stopPrice);
     const stopDistancePercent = (stopDistance / entryPrice) * 100;
@@ -99,7 +129,7 @@ export class PositionSizingService {
     const actualPositionSize = shares * entryPrice;
 
     // Check if this would exceed max capital deployment
-    const newTotalDeployed = currentCapitalDeployed + actualPositionSize;
+    const newTotalDeployed = sanitizedCapitalDeployed + actualPositionSize;
     const capitalDeploymentPercent = (newTotalDeployed / this.accountConfig.totalCapital) * 100;
 
     if (capitalDeploymentPercent > this.accountConfig.maxCapitalDeployedPercent) {
