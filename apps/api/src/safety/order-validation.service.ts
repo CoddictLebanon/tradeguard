@@ -43,14 +43,13 @@ export class OrderValidationService {
       return { valid: false, errors, warnings };
     }
 
-    // 2. Validate position size
+    // 2. Validate position size against capital deployment limit
     const positionValue = request.quantity * request.price;
-    const positionCheck = await this.circuitBreaker.validatePositionSize(
-      positionValue,
-      request.portfolioValue,
-    );
-    if (!positionCheck.valid) {
-      errors.push(positionCheck.reason || 'Position size exceeds limit');
+    const limits = this.circuitBreaker.getLimits();
+    const state = this.circuitBreaker.getState();
+    const maxCapitalAllowed = (limits.maxCapitalDeployedPercent / 100) * request.portfolioValue;
+    if (state.capitalDeployed + positionValue > maxCapitalAllowed) {
+      errors.push(`Position would exceed max capital deployment (${limits.maxCapitalDeployedPercent}%)`);
     }
 
     // 3. Check for duplicate positions on buy
@@ -90,10 +89,9 @@ export class OrderValidationService {
       errors.push(`Order value $${positionValue.toFixed(2)} below minimum $100`);
     }
 
-    // 6. Calculate maximum allowed quantity based on position limits
-    const limits = this.circuitBreaker.getLimits();
-    const maxPositionValue = (limits.maxPositionSize / 100) * request.portfolioValue;
-    const maxQuantity = Math.floor(maxPositionValue / request.price);
+    // 6. Calculate maximum allowed quantity based on capital deployment limits
+    const maxCapitalForNewPosition = maxCapitalAllowed - state.capitalDeployed;
+    const maxQuantity = Math.floor(Math.max(0, maxCapitalForNewPosition) / request.price);
 
     let adjustedQuantity: number | undefined;
     if (request.quantity > maxQuantity && request.side === 'buy') {
@@ -152,8 +150,10 @@ export class OrderValidationService {
     portfolioValue: number,
   ): Promise<number> {
     const limits = this.circuitBreaker.getLimits();
-    const maxPositionValue = (limits.maxPositionSize / 100) * portfolioValue;
-    return Math.floor(maxPositionValue / price);
+    const state = this.circuitBreaker.getState();
+    const maxCapitalAllowed = (limits.maxCapitalDeployedPercent / 100) * portfolioValue;
+    const maxCapitalForNewPosition = maxCapitalAllowed - state.capitalDeployed;
+    return Math.floor(Math.max(0, maxCapitalForNewPosition) / price);
   }
 
   async getValidationSummary(portfolioValue: number): Promise<{
@@ -162,7 +162,8 @@ export class OrderValidationService {
     isPaused: boolean;
     pauseReason: string | null;
     limits: {
-      maxPositionValue: number;
+      maxCapitalDeployedValue: number;
+      currentCapitalDeployed: number;
       maxOpenPositions: number;
       currentOpenPositions: number;
     };
@@ -177,7 +178,8 @@ export class OrderValidationService {
       isPaused: state.isPaused,
       pauseReason: state.pauseReason,
       limits: {
-        maxPositionValue: (limits.maxPositionSize / 100) * portfolioValue,
+        maxCapitalDeployedValue: (limits.maxCapitalDeployedPercent / 100) * portfolioValue,
+        currentCapitalDeployed: state.capitalDeployed,
         maxOpenPositions: limits.maxOpenPositions,
         currentOpenPositions: state.openPositionsCount,
       },

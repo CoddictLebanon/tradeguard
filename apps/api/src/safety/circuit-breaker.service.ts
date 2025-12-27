@@ -113,7 +113,7 @@ export class CircuitBreakerService {
     });
     this.state.openPositionsCount = openPositions.length;
     this.state.capitalDeployed = openPositions.reduce(
-      (sum, p) => sum + Number(p.quantity) * Number(p.entryPrice),
+      (sum, p) => sum + Number(p.shares) * Number(p.entryPrice),
       0,
     );
 
