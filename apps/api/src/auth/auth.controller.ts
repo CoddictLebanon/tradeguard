@@ -67,6 +67,21 @@ export class AuthController {
     return this.authService.login(dto.email, dto.password);
   }
 
+  // One-time setup endpoint - only works when no users exist
+  @Public()
+  @Post('setup')
+  async setup(@Body() dto: LoginDto): Promise<AuthResponse> {
+    return this.authService.setupInitialAdmin(dto.email, dto.password);
+  }
+
+  // Check if system needs setup
+  @Public()
+  @Get('status')
+  async status() {
+    const hasUsers = await this.authService.hasUsers();
+    return { needsSetup: !hasUsers };
+  }
+
   // Only admins can create new users - no public registration for trading system
   @Post('users')
   @Roles(UserRole.ADMIN)

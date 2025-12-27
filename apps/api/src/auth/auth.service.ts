@@ -152,4 +152,17 @@ export class AuthService {
       this.logger.warn('Created default admin user - CHANGE THE PASSWORD IMMEDIATELY');
     }
   }
+
+  async hasUsers(): Promise<boolean> {
+    const count = await this.userRepo.count();
+    return count > 0;
+  }
+
+  async setupInitialAdmin(email: string, password: string): Promise<AuthResponse> {
+    const hasExistingUsers = await this.hasUsers();
+    if (hasExistingUsers) {
+      throw new ConflictException('System is already set up');
+    }
+    return this.register(email, password, 'Admin', UserRole.ADMIN);
+  }
 }
