@@ -141,8 +141,8 @@ export class PolygonService {
     // Need 220 days to calculate 200-day MA slope
     const bars = await this.getBars(symbol, 'day', 220);
 
-    if (bars.length < 200) {
-      throw new Error(`Insufficient data for ${symbol}: need 200 days, got ${bars.length}`);
+    if (bars.length < 220) {
+      throw new Error(`Insufficient data for ${symbol}: need 220 days for slope calculation, got ${bars.length}`);
     }
 
     const currentPrice = bars[bars.length - 1].close;
