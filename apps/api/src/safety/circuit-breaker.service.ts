@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, Between } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
 import { Trade } from '../entities/trade.entity';
@@ -25,8 +25,10 @@ export class CircuitBreakerService {
     pauseUntil: null,
     dailyPnL: 0,
     weeklyPnL: 0,
+    monthlyPnL: 0,
     consecutiveLosses: 0,
     openPositionsCount: 0,
+    capitalDeployed: 0,
     paperTradeCount: 0,
     paperTradingStartDate: null,
   };
@@ -83,6 +85,10 @@ export class CircuitBreakerService {
     weekAgo.setDate(weekAgo.getDate() - 7);
     weekAgo.setHours(0, 0, 0, 0);
 
+    const monthAgo = new Date();
+    monthAgo.setDate(monthAgo.getDate() - 30);
+    monthAgo.setHours(0, 0, 0, 0);
+
     // Calculate daily P&L
     const todayTrades = await this.tradeRepo.find({
       where: { closedAt: MoreThan(today) },
@@ -95,10 +101,21 @@ export class CircuitBreakerService {
     });
     this.state.weeklyPnL = weekTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
 
-    // Count open positions
-    this.state.openPositionsCount = await this.positionRepo.count({
+    // Calculate monthly P&L
+    const monthTrades = await this.tradeRepo.find({
+      where: { closedAt: MoreThan(monthAgo) },
+    });
+    this.state.monthlyPnL = monthTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
+
+    // Count open positions and calculate capital deployed
+    const openPositions = await this.positionRepo.find({
       where: { status: PositionStatus.OPEN },
     });
+    this.state.openPositionsCount = openPositions.length;
+    this.state.capitalDeployed = openPositions.reduce(
+      (sum, p) => sum + Number(p.quantity) * Number(p.entryPrice),
+      0,
+    );
 
     // Calculate consecutive losses
     const recentTrades = await this.tradeRepo.find({
@@ -148,18 +165,25 @@ export class CircuitBreakerService {
       }
     }
 
-    // Check daily loss limit
-    const dailyLossThreshold = (this.limits.dailyLossLimit / 100) * portfolioValue;
+    // Check daily loss limit (0.5%)
+    const dailyLossThreshold = (this.limits.dailyLossLimitPercent / 100) * portfolioValue;
     if (this.state.dailyPnL < -dailyLossThreshold) {
       await this.pauseTrading('daily_limit', 'Daily loss limit reached');
-      return { allowed: false, reason: `Daily loss limit of ${this.limits.dailyLossLimit}% reached` };
+      return { allowed: false, reason: `Daily loss limit of ${this.limits.dailyLossLimitPercent}% reached` };
     }
 
-    // Check weekly loss limit
-    const weeklyLossThreshold = (this.limits.weeklyLossLimit / 100) * portfolioValue;
+    // Check weekly loss limit (1.5%)
+    const weeklyLossThreshold = (this.limits.weeklyLossLimitPercent / 100) * portfolioValue;
     if (this.state.weeklyPnL < -weeklyLossThreshold) {
       await this.pauseTrading('weekly_limit', 'Weekly loss limit reached', this.getNextMonday());
-      return { allowed: false, reason: `Weekly loss limit of ${this.limits.weeklyLossLimit}% reached` };
+      return { allowed: false, reason: `Weekly loss limit of ${this.limits.weeklyLossLimitPercent}% reached` };
+    }
+
+    // Check monthly loss limit (3%)
+    const monthlyLossThreshold = (this.limits.monthlyLossLimitPercent / 100) * portfolioValue;
+    if (this.state.monthlyPnL < -monthlyLossThreshold) {
+      await this.pauseTrading('monthly_limit', 'Monthly loss limit reached', this.getNextMonth());
+      return { allowed: false, reason: `Monthly loss limit of ${this.limits.monthlyLossLimitPercent}% reached` };
     }
 
     // Check consecutive losses
@@ -173,23 +197,13 @@ export class CircuitBreakerService {
       return { allowed: false, reason: `Maximum ${this.limits.maxOpenPositions} open positions reached` };
     }
 
-    return { allowed: true };
-  }
-
-  async validatePositionSize(
-    positionValue: number,
-    portfolioValue: number,
-  ): Promise<{ valid: boolean; reason?: string }> {
-    const positionPercent = (positionValue / portfolioValue) * 100;
-
-    if (positionPercent > this.limits.maxPositionSize) {
-      return {
-        valid: false,
-        reason: `Position size ${positionPercent.toFixed(2)}% exceeds max ${this.limits.maxPositionSize}%`,
-      };
+    // Check max capital deployed
+    const maxCapitalThreshold = (this.limits.maxCapitalDeployedPercent / 100) * portfolioValue;
+    if (this.state.capitalDeployed >= maxCapitalThreshold) {
+      return { allowed: false, reason: `Maximum ${this.limits.maxCapitalDeployedPercent}% capital deployed reached` };
     }
 
-    return { valid: true };
+    return { allowed: true };
   }
 
   async canSwitchToLive(): Promise<{ allowed: boolean; reason?: string }> {
@@ -343,6 +357,13 @@ export class CircuitBreakerService {
     nextMonday.setDate(now.getDate() + daysUntilMonday);
     nextMonday.setHours(9, 30, 0, 0);
     return nextMonday;
+  }
+
+  private getNextMonth(): Date {
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    nextMonth.setHours(9, 30, 0, 0);
+    return nextMonth;
   }
 
   async updateLimits(limits: Partial<SafetyLimits>): Promise<void> {
