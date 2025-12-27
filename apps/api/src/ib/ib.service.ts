@@ -450,6 +450,143 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Modified TRAIL STOP order ${orderId}: ${trailPercent}%`);
   }
 
+  async placeBracketOrder(
+    symbol: string,
+    shares: number,
+    entryLimitPrice: number,
+    stopPrice: number,
+  ): Promise<{
+    parentOrderId: number;
+    stopOrderId: number;
+  }> {
+    // Check if we're in paper trading mode
+    if (this.circuitBreaker.isPaperMode()) {
+      return this.simulateBracketOrder(symbol, shares, entryLimitPrice, stopPrice);
+    }
+
+    const contract = this.createStockContract(symbol);
+    const parentOrderId = this.getNextOrderId();
+    const stopOrderId = this.getNextOrderId();
+
+    // Parent order - limit buy
+    const parentOrder: Order = {
+      orderId: parentOrderId,
+      action: OrderAction.BUY,
+      orderType: OrderType.LMT,
+      totalQuantity: shares,
+      lmtPrice: entryLimitPrice,
+      transmit: false, // Don't transmit until stop is attached
+    };
+
+    // Stop loss order - attached to parent
+    const stopOrder: Order = {
+      orderId: stopOrderId,
+      action: OrderAction.SELL,
+      orderType: OrderType.STP,
+      totalQuantity: shares,
+      auxPrice: stopPrice, // Stop trigger price
+      parentId: parentOrderId,
+      transmit: true, // Transmit both orders
+    };
+
+    this.ib.placeOrder(parentOrderId, contract, parentOrder);
+    this.ib.placeOrder(stopOrderId, contract, stopOrder);
+
+    this.logger.log(
+      `Placed BRACKET order: BUY ${shares} ${symbol} @ ${entryLimitPrice}, STOP @ ${stopPrice}`
+    );
+
+    return { parentOrderId, stopOrderId };
+  }
+
+  private async simulateBracketOrder(
+    symbol: string,
+    shares: number,
+    entryLimitPrice: number,
+    stopPrice: number,
+  ): Promise<{ parentOrderId: number; stopOrderId: number }> {
+    const parentOrderId = this.paperOrderId++;
+    const stopOrderId = this.paperOrderId++;
+
+    this.logger.log(
+      `[PAPER] Simulated BRACKET: BUY ${shares} ${symbol} @ ${entryLimitPrice}, STOP @ ${stopPrice}`
+    );
+
+    // Simulate entry fill after delay
+    setTimeout(() => {
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId: parentOrderId,
+        status: 'Filled',
+        filled: shares,
+        remaining: 0,
+        avgFillPrice: entryLimitPrice,
+        isPaper: true,
+      });
+
+      // Stop order becomes active
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId: stopOrderId,
+        status: 'PreSubmitted',
+        filled: 0,
+        remaining: shares,
+        avgFillPrice: 0,
+        isPaper: true,
+        stopPrice,
+      });
+    }, 100);
+
+    return { parentOrderId, stopOrderId };
+  }
+
+  // Modify stop - only allowed to move UP (tighten), never widen
+  async modifyStopPrice(
+    orderId: number,
+    symbol: string,
+    shares: number,
+    currentStopPrice: number,
+    newStopPrice: number,
+  ): Promise<{ success: boolean; reason?: string }> {
+    // CRITICAL: Stop can only move UP, never down
+    if (newStopPrice < currentStopPrice) {
+      this.logger.warn(`Rejected stop modification: ${newStopPrice} < ${currentStopPrice} (widening not allowed)`);
+      return {
+        success: false,
+        reason: 'Stop losses may only move upward, never downward',
+      };
+    }
+
+    if (orderId >= 100000) {
+      // Paper order
+      this.logger.log(`[PAPER] Modified STOP order ${orderId}: ${currentStopPrice} -> ${newStopPrice}`);
+      this.eventEmitter.emit('ib.orderStatus', {
+        orderId,
+        status: 'PreSubmitted',
+        filled: 0,
+        remaining: shares,
+        avgFillPrice: 0,
+        isPaper: true,
+        stopPrice: newStopPrice,
+      });
+      return { success: true };
+    }
+
+    const contract = this.createStockContract(symbol);
+
+    const stopOrder: Order = {
+      orderId,
+      action: OrderAction.SELL,
+      orderType: OrderType.STP,
+      totalQuantity: shares,
+      auxPrice: newStopPrice,
+      transmit: true,
+    };
+
+    this.ib.placeOrder(orderId, contract, stopOrder);
+    this.logger.log(`Modified STOP order ${orderId}: ${currentStopPrice} -> ${newStopPrice}`);
+
+    return { success: true };
+  }
+
   isPaperMode(): boolean {
     return this.circuitBreaker.isPaperMode();
   }
