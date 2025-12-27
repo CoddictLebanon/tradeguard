@@ -8,29 +8,34 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
+import { Request as ExpressRequest } from 'express';
 import { AuthService, AuthResponse } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from './public.decorator';
 import { Roles } from './roles.decorator';
-import { UserRole } from '../entities/user.entity';
+import { UserRole, User } from '../entities/user.entity';
 import { IsEmail, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
+
+interface AuthenticatedRequest extends ExpressRequest {
+  user: User;
+}
 
 class LoginDto {
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsString()
   @MinLength(8)
-  password: string;
+  password!: string;
 }
 
 class CreateUserDto {
   @IsEmail()
-  email: string;
+  email!: string;
 
   @IsString()
   @MinLength(8)
-  password: string;
+  password!: string;
 
   @IsString()
   @IsOptional()
@@ -44,11 +49,11 @@ class CreateUserDto {
 class ChangePasswordDto {
   @IsString()
   @MinLength(8)
-  currentPassword: string;
+  currentPassword!: string;
 
   @IsString()
   @MinLength(8)
-  newPassword: string;
+  newPassword!: string;
 }
 
 @Controller('auth')
@@ -71,7 +76,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  async getProfile(@Request() req) {
+  async getProfile(@Request() req: AuthenticatedRequest) {
     return {
       id: req.user.id,
       email: req.user.email,
@@ -83,7 +88,10 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
-  async changePassword(@Request() req, @Body() dto: ChangePasswordDto) {
+  async changePassword(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
     await this.authService.changePassword(
       req.user.id,
       dto.currentPassword,

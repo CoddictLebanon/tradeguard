@@ -78,9 +78,9 @@ export class OrderValidationService {
 
       if (!existingPosition) {
         errors.push(`No open position in ${request.symbol} to sell`);
-      } else if (existingPosition.quantity < request.quantity) {
+      } else if (existingPosition.shares < request.quantity) {
         errors.push(
-          `Trying to sell ${request.quantity} shares but only have ${existingPosition.quantity}`,
+          `Trying to sell ${request.quantity} shares but only have ${existingPosition.shares}`,
         );
       }
     }

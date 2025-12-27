@@ -95,7 +95,7 @@ export class ScannerService {
         }
 
         // Get AI analysis for high-scoring opportunities
-        let aiAnalysis = null;
+        let aiAnalysis: Awaited<ReturnType<typeof this.aiService.getTradeReasoning>> | null = null;
         if (score.totalScore >= 70 && this.aiService.isConfigured()) {
           try {
             const news = await this.polygonService.getNews(score.symbol, 5);
@@ -105,12 +105,12 @@ export class ScannerService {
               symbol: score.symbol,
               currentPrice: score.currentPrice,
               score: score.totalScore,
-              factors: score.factors,
-              indicators,
+              factors: score.factors as unknown as Record<string, number>,
+              indicators: indicators as unknown as Record<string, number>,
               newsHeadlines: news.map((n) => n.title),
             });
           } catch (error) {
-            this.logger.warn(`AI analysis failed for ${score.symbol}: ${error.message}`);
+            this.logger.warn(`AI analysis failed for ${score.symbol}: ${(error as Error).message}`);
           }
         }
 

@@ -21,7 +21,7 @@ Respond in JSON format:
 export const TRADE_REASONING_PROMPT = `You are a trading analyst assistant. Based on the following data, provide a trade recommendation:
 
 Stock: {symbol}
-Current Price: ${currentPrice}
+Current Price: {currentPrice}
 Score: {score}/100
 
 Technical Factors:
@@ -56,13 +56,13 @@ export const RISK_ASSESSMENT_PROMPT = `You are a portfolio risk manager. Evaluat
 
 Proposed Trade:
 - Symbol: {symbol}
-- Position Size: ${positionSize} ({positionPercent}% of portfolio)
-- Entry: ${entry}
+- Position Size: {positionSize} ({positionPercent}% of portfolio)
+- Entry: {entry}
 - Trail Stop: {trailPercent}%
 
 Current Portfolio:
-- Total Value: ${portfolioValue}
-- Cash Available: ${cashAvailable}
+- Total Value: {portfolioValue}
+- Cash Available: {cashAvailable}
 - Current Positions: {currentPositions}
 - Sector Exposure: {sectorExposure}
 

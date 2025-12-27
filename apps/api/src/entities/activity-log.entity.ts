@@ -11,6 +11,7 @@ export enum ActivityType {
   POSITION_CLOSED = 'position_closed',
   CIRCUIT_BREAKER = 'circuit_breaker',
   SETTING_CHANGED = 'setting_changed',
+  SYSTEM = 'system',
 }
 
 @Entity('activity_log')

@@ -23,7 +23,7 @@ export class FinnhubService {
       throw new Error(`Finnhub API error: ${response.status} ${response.statusText}`);
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
   async getCompanyNews(symbol: string, daysBack: number = 7): Promise<NewsArticle[]> {

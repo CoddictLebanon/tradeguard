@@ -23,7 +23,7 @@ export class PolygonService {
       throw new Error(`Polygon API error: ${response.status} ${response.statusText}`);
     }
 
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
   async getQuote(symbol: string): Promise<StockQuote> {

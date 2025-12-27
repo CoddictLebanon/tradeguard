@@ -63,7 +63,7 @@ export class CircuitBreakerService {
 
       await this.refreshState();
     } catch (error) {
-      this.logger.error(`Failed to load settings: ${error.message}`);
+      this.logger.error(`Failed to load settings: ${(error as Error).message}`);
     }
   }
 

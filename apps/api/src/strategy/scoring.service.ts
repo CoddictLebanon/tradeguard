@@ -48,7 +48,7 @@ export class ScoringService {
         confidence: this.calculateConfidence(factors, indicators),
       };
     } catch (error) {
-      this.logger.error(`Failed to score ${symbol}: ${error.message}`);
+      this.logger.error(`Failed to score ${symbol}: ${(error as Error).message}`);
       throw error;
     }
   }

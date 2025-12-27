@@ -78,7 +78,7 @@ export class AIService {
       const response = await this.chat(prompt);
       return this.parseJSON<NewsAnalysis>(response);
     } catch (error) {
-      this.logger.error(`News analysis failed: ${error.message}`);
+      this.logger.error(`News analysis failed: ${(error as Error).message}`);
       return {
         summary: 'Analysis unavailable',
         sentiment: 'neutral',
@@ -97,9 +97,9 @@ export class AIService {
     indicators: Record<string, number>;
     newsHeadlines: string[];
   }): Promise<TradeReasoning> {
-    let prompt = TRADE_REASONING_PROMPT
+    const prompt = TRADE_REASONING_PROMPT
       .replace('{symbol}', params.symbol)
-      .replace('${currentPrice}', params.currentPrice.toString())
+      .replace('{currentPrice}', params.currentPrice.toString())
       .replace('{score}', params.score.toString())
       .replace('{volumeSurge}', params.factors.volumeSurge?.toString() || '0')
       .replace('{technicalBreakout}', params.factors.technicalBreakout?.toString() || '0')
@@ -116,7 +116,7 @@ export class AIService {
       const response = await this.chat(prompt);
       return this.parseJSON<TradeReasoning>(response);
     } catch (error) {
-      this.logger.error(`Trade reasoning failed: ${error.message}`);
+      this.logger.error(`Trade reasoning failed: ${(error as Error).message}`);
       return {
         recommendation: 'HOLD',
         summary: 'AI analysis unavailable',
@@ -144,14 +144,14 @@ export class AIService {
     marketTrend?: string;
     upcomingEvents?: string;
   }): Promise<RiskAssessment> {
-    let prompt = RISK_ASSESSMENT_PROMPT
+    const prompt = RISK_ASSESSMENT_PROMPT
       .replace('{symbol}', params.symbol)
-      .replace('${positionSize}', params.positionSize.toString())
+      .replace('{positionSize}', params.positionSize.toString())
       .replace('{positionPercent}', params.positionPercent.toString())
-      .replace('${entry}', params.entry.toString())
+      .replace('{entry}', params.entry.toString())
       .replace('{trailPercent}', params.trailPercent.toString())
-      .replace('${portfolioValue}', params.portfolioValue.toString())
-      .replace('${cashAvailable}', params.cashAvailable.toString())
+      .replace('{portfolioValue}', params.portfolioValue.toString())
+      .replace('{cashAvailable}', params.cashAvailable.toString())
       .replace('{currentPositions}', params.currentPositions || 'None')
       .replace('{sectorExposure}', params.sectorExposure || 'None')
       .replace('{vix}', params.vix?.toString() || 'Unknown')
@@ -162,7 +162,7 @@ export class AIService {
       const response = await this.chat(prompt);
       return this.parseJSON<RiskAssessment>(response);
     } catch (error) {
-      this.logger.error(`Risk assessment failed: ${error.message}`);
+      this.logger.error(`Risk assessment failed: ${(error as Error).message}`);
       return {
         recommendation: 'CAUTION',
         reason: 'AI risk assessment unavailable',

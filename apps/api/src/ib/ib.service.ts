@@ -179,7 +179,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       const positions: IBPosition[] = [];
 
       const handler = (account: string, contract: Contract, pos: number, avgCost: number) => {
-        if (pos !== 0) {
+        if (pos !== 0 && contract.symbol) {
           positions.push({
             symbol: contract.symbol,
             position: pos,
@@ -191,19 +191,19 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       };
 
       const endHandler = () => {
-        this.ib.off(EventName.position, handler);
-        this.ib.off(EventName.positionEnd, endHandler);
+        (this.ib as any).off(EventName.position, handler);
+        (this.ib as any).off(EventName.positionEnd, endHandler);
         resolve(positions);
       };
 
-      this.ib.on(EventName.position, handler);
-      this.ib.on(EventName.positionEnd, endHandler);
+      (this.ib as any).on(EventName.position, handler);
+      (this.ib as any).on(EventName.positionEnd, endHandler);
 
       this.ib.reqPositions();
 
       setTimeout(() => {
-        this.ib.off(EventName.position, handler);
-        this.ib.off(EventName.positionEnd, endHandler);
+        (this.ib as any).off(EventName.position, handler);
+        (this.ib as any).off(EventName.positionEnd, endHandler);
         reject(new Error('Positions timeout'));
       }, 5000);
     });
