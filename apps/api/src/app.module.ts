@@ -10,6 +10,10 @@ import { AIModule } from './ai/ai.module';
 import { ScannerModule } from './scanner/scanner.module';
 import { SafetyModule } from './safety/safety.module';
 import { AuthModule } from './auth/auth.module';
+import { TradeUniverseModule } from './universe/trade-universe.module';
+import { EventsModule } from './events/events.module';
+import { RiskModule } from './risk/risk.module';
+import { LoggingModule } from './logging/logging.module';
 
 @Module({
   imports: [
@@ -23,10 +27,14 @@ import { AuthModule } from './auth/auth.module';
     AuthModule,
     IBModule,
     DataModule,
+    TradeUniverseModule,
+    EventsModule,
+    RiskModule,
     StrategyModule,
     AIModule,
     ScannerModule,
     SafetyModule,
+    LoggingModule,
   ],
   controllers: [],
   providers: [],
