@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:667';
 
 interface ApiOptions {
   method?: string;
@@ -34,7 +34,7 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
 export const api = {
   // Auth
   login: (email: string, password: string) =>
-    apiRequest<{ access_token: string; user: { email: string; role: string } }>('/auth/login', {
+    apiRequest<{ accessToken: string; user: { email: string; role: string } }>('/auth/login', {
       method: 'POST',
       body: { email, password },
     }),
@@ -42,36 +42,43 @@ export const api = {
   // Dashboard
   getDashboard: (token: string) =>
     apiRequest<{
-      tradingState: {
+      state: {
         mode: 'paper' | 'live';
         isPaused: boolean;
         pauseReason: string | null;
         dailyPnL: number;
         weeklyPnL: number;
+        monthlyPnL: number;
         consecutiveLosses: number;
         openPositionsCount: number;
+        capitalDeployed: number;
       };
       limits: {
-        dailyLossLimit: number;
-        weeklyLossLimit: number;
-        maxPositionSize: number;
+        dailyLossLimitPercent: number;
+        weeklyLossLimitPercent: number;
+        monthlyLossLimitPercent: number;
         maxOpenPositions: number;
+        maxCapitalDeployedPercent: number;
       };
-      ibConnected: boolean;
-    }>('/safety/state', { token }),
+      tradingMode: 'paper' | 'live';
+      canTrade: boolean;
+    }>('/safety/status', { token }),
 
   // Opportunities
   getOpportunities: (token: string) =>
     apiRequest<Array<{
       id: string;
       symbol: string;
+      companyName: string | null;
+      logoUrl: string | null;
       score: number;
-      factors: Record<string, number>;
+      factors: Record<string, number | string | boolean>;
       currentPrice: number;
       aiAnalysis: string | null;
       bullCase: string | null;
       bearCase: string | null;
       aiConfidence: number | null;
+      aiRecommendation: string | null;
       suggestedEntry: number;
       suggestedTrailPercent: number;
       status: string;
@@ -90,11 +97,35 @@ export const api = {
       token,
     }),
 
-  triggerScan: (token: string, symbols?: string[]) =>
+  calculatePositionSize: (token: string, id: string) =>
+    apiRequest<{
+      status: 'OK' | 'REJECT';
+      symbol: string;
+      entry: number;
+      stop: number | null;
+      stop_pct: number | null;
+      risk_usd?: number;
+      risk_per_share?: number;
+      shares?: number;
+      position_usd?: number;
+      max_loss_usd?: number;
+      reason?: string;
+    }>(`/scanner/opportunities/${id}/calculate`, {
+      method: 'POST',
+      token,
+    }),
+
+  triggerScan: (token: string, symbols?: string[], asOfDate?: string) =>
     apiRequest<{ opportunities: unknown[] }>('/scanner/scan', {
       method: 'POST',
       token,
-      body: symbols ? { symbols } : undefined,
+      body: { symbols, asOfDate },
+    }),
+
+  dedupOpportunities: (token: string) =>
+    apiRequest<{ removed: number }>('/scanner/opportunities/dedup', {
+      method: 'POST',
+      token,
     }),
 
   // Positions
@@ -170,7 +201,7 @@ export const api = {
     maxConsecutiveLosses?: number;
   }) =>
     apiRequest<{ success: boolean }>('/safety/limits', {
-      method: 'PUT',
+      method: 'POST',
       token,
       body: limits,
     }),
@@ -187,6 +218,36 @@ export const api = {
       token,
     }),
 
+  // Account Config (Position Sizing)
+  getAccountConfig: (token: string) =>
+    apiRequest<{
+      account: {
+        totalCapital: number;
+        riskPerTradePercent: number;
+        maxCapitalDeployedPercent: number;
+        stopBuffer: number;
+      };
+      risk: {
+        minStopDistancePercent: number;
+        maxStopDistancePercent: number;
+      };
+    }>('/scanner/config', { token }),
+
+  updateAccountConfig: (
+    token: string,
+    config: {
+      totalCapital?: number;
+      riskPerTradePercent?: number;
+      stopBuffer?: number;
+      maxCapitalDeployedPercent?: number;
+    },
+  ) =>
+    apiRequest<{ success: boolean }>('/scanner/config', {
+      method: 'POST',
+      token,
+      body: config,
+    }),
+
   // Activity Log
   getActivityLog: (token: string, limit = 50) =>
     apiRequest<Array<{
@@ -196,4 +257,39 @@ export const api = {
       details: Record<string, unknown>;
       createdAt: string;
     }>>(`/activity?limit=${limit}`, { token }),
+
+  // Simulation
+  getSimulationConfig: (token: string) =>
+    apiRequest<{ enabled: boolean; date: string | null }>('/safety/simulation', { token }),
+
+  updateSimulationConfig: (token: string, config: { enabled?: boolean; date?: string }) =>
+    apiRequest<{ success: boolean; config: { enabled: boolean; date: string | null } }>(
+      '/safety/simulation',
+      { method: 'POST', token, body: config }
+    ),
+
+  runSimulation: (token: string, input: {
+    symbol: string;
+    entryDate: string;
+    entryPrice: number;
+    shares: number;
+    stopPrice: number;
+    trailPercent: number;
+    maxDays?: number;
+  }) =>
+    apiRequest<{
+      symbol: string;
+      entryDate: string;
+      entryPrice: number;
+      exitDate: string;
+      exitPrice: number;
+      exitReason: string;
+      shares: number;
+      daysHeld: number;
+      pnl: number;
+      pnlPercent: number;
+      highestPrice: number;
+      events: Array<{ day: number; date: string; type: string; price: number; stopPrice: number; note?: string }>;
+      dailyData: Array<{ date: string; open: number; high: number; low: number; close: number; stopPrice: number }>;
+    }>('/simulation/run', { method: 'POST', token, body: input }),
 };

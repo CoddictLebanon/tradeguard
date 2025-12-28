@@ -5,11 +5,11 @@ import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 
 interface SafetyLimits {
-  dailyLossLimit: number;
-  weeklyLossLimit: number;
-  maxPositionSize: number;
+  dailyLossLimitPercent: number;
+  weeklyLossLimitPercent: number;
+  monthlyLossLimitPercent: number;
+  maxCapitalDeployedPercent: number;
   maxOpenPositions: number;
-  maxConsecutiveLosses: number;
 }
 
 interface TradingState {
@@ -18,22 +18,39 @@ interface TradingState {
   pauseReason: string | null;
 }
 
+interface AccountConfig {
+  totalCapital: number;
+  riskPerTradePercent: number;
+  maxCapitalDeployedPercent: number;
+  stopBuffer: number;
+}
+
 export default function SettingsPage() {
   const token = useAuthStore((state) => state.token);
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const [limits, setLimits] = useState<SafetyLimits | null>(null);
-  const [state, setState] = useState<TradingState | null>(null);
+  const [tradingState, setTradingState] = useState<TradingState | null>(null);
+  const [accountConfig, setAccountConfig] = useState<AccountConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
   const [pauseReason, setPauseReason] = useState('');
+  const [simulationConfig, setSimulationConfig] = useState<{ enabled: boolean; date: string | null } | null>(null);
+  const [savingSimulation, setSavingSimulation] = useState(false);
 
   const fetchSettings = async () => {
     if (!token) return;
     try {
-      const data = await api.getDashboard(token);
-      setLimits(data.limits as unknown as SafetyLimits);
-      setState(data.tradingState);
+      const [dashboardData, configData, simConfig] = await Promise.all([
+        api.getDashboard(token),
+        api.getAccountConfig(token),
+        api.getSimulationConfig(token),
+      ]);
+      setLimits(dashboardData.limits);
+      setTradingState(dashboardData.state);
+      setAccountConfig(configData.account);
+      setSimulationConfig(simConfig);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -50,12 +67,29 @@ export default function SettingsPage() {
     if (!token || !limits) return;
     setSaving(true);
     try {
-      await api.updateLimits(token, limits);
+      await api.updateLimits(token, {
+        dailyLossLimit: limits.dailyLossLimitPercent,
+        weeklyLossLimit: limits.weeklyLossLimitPercent,
+        maxOpenPositions: limits.maxOpenPositions,
+      });
       await fetchSettings();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save limits');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveAccountConfig = async () => {
+    if (!token || !accountConfig) return;
+    setSavingConfig(true);
+    try {
+      await api.updateAccountConfig(token, accountConfig);
+      await fetchSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save position sizing config');
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -81,9 +115,9 @@ export default function SettingsPage() {
   };
 
   const handleSwitchMode = async () => {
-    if (!token || !state) return;
+    if (!token || !tradingState) return;
     try {
-      if (state.mode === 'paper') {
+      if (tradingState.mode === 'paper') {
         const result = await api.switchToLive(token);
         if (!result.success) {
           setError(result.reason || 'Cannot switch to live mode');
@@ -95,6 +129,22 @@ export default function SettingsPage() {
       await fetchSettings();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to switch mode');
+    }
+  };
+
+  const handleSaveSimulation = async () => {
+    if (!token || !simulationConfig) return;
+    setSavingSimulation(true);
+    try {
+      await api.updateSimulationConfig(token, {
+        enabled: simulationConfig.enabled,
+        date: simulationConfig.date || undefined,
+      });
+      await fetchSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save simulation config');
+    } finally {
+      setSavingSimulation(false);
     }
   };
 
@@ -125,22 +175,22 @@ export default function SettingsPage() {
         <h2 className="text-lg font-semibold text-white">Trading Mode</h2>
         <div className="flex items-center gap-4">
           <span className={`text-xl font-bold uppercase ${
-            state?.mode === 'paper' ? 'text-yellow-500' : 'text-green-500'
+            tradingState?.mode === 'paper' ? 'text-yellow-500' : 'text-green-500'
           }`}>
-            {state?.mode}
+            {tradingState?.mode}
           </span>
           <button
             onClick={handleSwitchMode}
             className={`px-4 py-2 rounded-lg ${
-              state?.mode === 'paper'
+              tradingState?.mode === 'paper'
                 ? 'bg-green-600 hover:bg-green-700'
                 : 'bg-yellow-600 hover:bg-yellow-700'
             } text-white`}
           >
-            {state?.mode === 'paper' ? 'Switch to Live' : 'Switch to Paper'}
+            {tradingState?.mode === 'paper' ? 'Switch to Live' : 'Switch to Paper'}
           </button>
         </div>
-        {state?.mode === 'paper' && (
+        {tradingState?.mode === 'paper' && (
           <p className="text-gray-400 text-sm">
             Must complete minimum paper trading period with positive P/L to switch to live.
           </p>
@@ -150,11 +200,11 @@ export default function SettingsPage() {
       {/* Trading Controls */}
       <section className="bg-gray-800 p-6 rounded-lg space-y-4">
         <h2 className="text-lg font-semibold text-white">Trading Controls</h2>
-        {state?.isPaused ? (
+        {tradingState?.isPaused ? (
           <div className="space-y-4">
             <div className="bg-red-500/20 border border-red-500 p-4 rounded">
               <span className="text-red-500 font-bold">Trading is paused:</span>
-              <span className="text-red-400 ml-2">{state.pauseReason}</span>
+              <span className="text-red-400 ml-2">{tradingState.pauseReason}</span>
             </div>
             <button
               onClick={handleResume}
@@ -192,8 +242,9 @@ export default function SettingsPage() {
               <label className="block text-sm text-gray-400">Daily Loss Limit (%)</label>
               <input
                 type="number"
-                value={limits.dailyLossLimit}
-                onChange={(e) => setLimits({ ...limits, dailyLossLimit: Number(e.target.value) })}
+                step="0.1"
+                value={limits.dailyLossLimitPercent}
+                onChange={(e) => setLimits({ ...limits, dailyLossLimitPercent: Number(e.target.value) })}
                 className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
               />
             </div>
@@ -201,17 +252,28 @@ export default function SettingsPage() {
               <label className="block text-sm text-gray-400">Weekly Loss Limit (%)</label>
               <input
                 type="number"
-                value={limits.weeklyLossLimit}
-                onChange={(e) => setLimits({ ...limits, weeklyLossLimit: Number(e.target.value) })}
+                step="0.1"
+                value={limits.weeklyLossLimitPercent}
+                onChange={(e) => setLimits({ ...limits, weeklyLossLimitPercent: Number(e.target.value) })}
                 className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-400">Max Position Size (%)</label>
+              <label className="block text-sm text-gray-400">Monthly Loss Limit (%)</label>
               <input
                 type="number"
-                value={limits.maxPositionSize}
-                onChange={(e) => setLimits({ ...limits, maxPositionSize: Number(e.target.value) })}
+                step="0.1"
+                value={limits.monthlyLossLimitPercent}
+                onChange={(e) => setLimits({ ...limits, monthlyLossLimitPercent: Number(e.target.value) })}
+                className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400">Max Capital Deployed (%)</label>
+              <input
+                type="number"
+                value={limits.maxCapitalDeployedPercent}
+                onChange={(e) => setLimits({ ...limits, maxCapitalDeployedPercent: Number(e.target.value) })}
                 className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
               />
             </div>
@@ -234,6 +296,107 @@ export default function SettingsPage() {
           </button>
         </section>
       )}
+
+      {/* Position Sizing */}
+      {accountConfig && (
+        <section className="bg-gray-800 p-6 rounded-lg space-y-4">
+          <h2 className="text-lg font-semibold text-white">Position Sizing</h2>
+          <p className="text-sm text-gray-400">
+            Configure how position sizes are calculated for each trade.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400">Total Capital ($)</label>
+              <input
+                type="number"
+                step="1000"
+                value={accountConfig.totalCapital}
+                onChange={(e) => setAccountConfig({ ...accountConfig, totalCapital: Number(e.target.value) })}
+                className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400">Risk Per Trade (%)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={accountConfig.riskPerTradePercent}
+                onChange={(e) => setAccountConfig({ ...accountConfig, riskPerTradePercent: Number(e.target.value) })}
+                className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Risk amount: ${((accountConfig.totalCapital * accountConfig.riskPerTradePercent) / 100).toLocaleString()}
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400">Stop Buffer (%)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={accountConfig.stopBuffer * 100}
+                onChange={(e) => setAccountConfig({ ...accountConfig, stopBuffer: Number(e.target.value) / 100 })}
+                className="mt-1 w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Buffer below pullback low for stop placement
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleSaveAccountConfig}
+            disabled={savingConfig}
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg"
+          >
+            {savingConfig ? 'Saving...' : 'Save Position Sizing'}
+          </button>
+        </section>
+      )}
+
+      {/* Simulation Mode */}
+      <section className="bg-gray-800 p-6 rounded-lg space-y-4">
+        <h2 className="text-lg font-semibold text-white">Simulation Mode</h2>
+        <p className="text-sm text-gray-400">
+          Enable to backtest trades using historical data. The app will behave as if today is the simulation date.
+        </p>
+
+        {simulationConfig && (
+          <div className="space-y-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={simulationConfig.enabled}
+                onChange={(e) => setSimulationConfig({ ...simulationConfig, enabled: e.target.checked })}
+                className="w-5 h-5 rounded bg-gray-700 border-gray-600"
+              />
+              <span className="text-white">Enable Simulation Mode</span>
+            </label>
+
+            {simulationConfig.enabled && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Simulation Date</label>
+                <input
+                  type="date"
+                  value={simulationConfig.date || ''}
+                  onChange={(e) => setSimulationConfig({ ...simulationConfig, date: e.target.value })}
+                  max={new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                  className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Must be at least 60 days in the past for simulation to complete
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={handleSaveSimulation}
+              disabled={savingSimulation}
+              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-800 text-white rounded"
+            >
+              {savingSimulation ? 'Saving...' : 'Save Simulation Settings'}
+            </button>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
