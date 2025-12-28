@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+import SimulationResultModal from '@/components/SimulationResultModal';
 
 interface PositionSizeResult {
   status: 'OK' | 'REJECT';
@@ -740,6 +741,17 @@ export default function OpportunitiesPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Simulation Result Modal */}
+      {showSimulationResult && simulationResult && (
+        <SimulationResultModal
+          result={simulationResult}
+          onClose={() => {
+            setShowSimulationResult(false);
+            setSimulationResult(null);
+          }}
+        />
       )}
     </div>
   );
