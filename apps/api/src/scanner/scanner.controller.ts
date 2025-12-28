@@ -1,7 +1,31 @@
-import { Controller, Get, Post, Delete, Param, Body, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, UseGuards, Query, BadRequestException } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ScannerService } from './scanner.service';
 import { PositionSizingService } from '../risk/position-sizing.service';
+
+function validateAsOfDate(asOfDate: string | undefined): void {
+  if (!asOfDate) return;
+
+  // Validate format is YYYY-MM-DD
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(asOfDate)) {
+    throw new BadRequestException('asOfDate must be in YYYY-MM-DD format');
+  }
+
+  // Validate it's a valid date
+  const parsedDate = new Date(asOfDate + 'T00:00:00Z');
+  if (isNaN(parsedDate.getTime())) {
+    throw new BadRequestException('asOfDate is not a valid date');
+  }
+
+  // Validate date is not in the future
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const inputDate = new Date(asOfDate + 'T00:00:00Z');
+  if (inputDate > today) {
+    throw new BadRequestException('asOfDate cannot be in the future');
+  }
+}
 
 @Controller('scanner')
 @UseGuards(JwtAuthGuard)
@@ -18,6 +42,7 @@ export class ScannerController {
 
   @Post('scan')
   async triggerScan(@Body() body: { symbols?: string[]; asOfDate?: string }) {
+    validateAsOfDate(body.asOfDate);
     const opportunities = await this.scannerService.manualScan(body.symbols, body.asOfDate);
     return { opportunities };
   }
@@ -36,9 +61,13 @@ export class ScannerController {
 
   // Debug endpoint to see qualification results
   @Get('qualify')
-  async getQualificationResults(@Query('symbols') symbols?: string) {
+  async getQualificationResults(
+    @Query('symbols') symbols?: string,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    validateAsOfDate(asOfDate);
     const symbolList = symbols ? symbols.split(',').map(s => s.trim().toUpperCase()) : undefined;
-    return this.scannerService.getQualificationResults(symbolList);
+    return this.scannerService.getQualificationResults(symbolList, asOfDate);
   }
 
   @Delete('opportunities/pending')

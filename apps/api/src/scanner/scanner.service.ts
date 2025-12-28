@@ -286,12 +286,12 @@ export class ScannerService {
   }
 
   // Get qualification results for debugging/display
-  async getQualificationResults(symbols?: string[]): Promise<QualificationResult[]> {
+  async getQualificationResults(symbols?: string[], asOfDate?: string): Promise<QualificationResult[]> {
     if (!symbols || symbols.length === 0) {
       const watchlist = await this.watchlistRepo.find({ where: { active: true } });
       symbols = watchlist.map(w => w.symbol);
     }
-    return this.buyQualificationService.qualifyMultiple(symbols);
+    return this.buyQualificationService.qualifyMultiple(symbols, asOfDate);
   }
 
   // Clear all pending opportunities
