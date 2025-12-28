@@ -45,3 +45,13 @@ export const DEFAULT_SAFETY_LIMITS: SafetyLimits = {
   minPaperTradeDays: 30,            // 1 month minimum
   minPaperTrades: 50,
 };
+
+export interface SimulationConfig {
+  enabled: boolean;
+  date: string | null; // ISO date string YYYY-MM-DD
+}
+
+export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
+  enabled: false,
+  date: null,
+};

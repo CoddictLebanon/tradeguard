@@ -20,7 +20,7 @@ export default function LoginPage() {
 
     try {
       const response = await api.login(email, password);
-      setAuth(response.access_token, response.user as { email: string; role: 'admin' | 'trader' | 'viewer' });
+      setAuth(response.accessToken, response.user as { email: string; role: 'admin' | 'trader' | 'viewer' });
       router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');

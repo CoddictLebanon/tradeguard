@@ -124,4 +124,17 @@ export class SafetyController {
     await this.circuitBreaker.refreshState();
     return this.circuitBreaker.getState();
   }
+
+  @Get('simulation')
+  async getSimulationConfig() {
+    return this.circuitBreaker.getSimulationConfig();
+  }
+
+  @Post('simulation')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async updateSimulationConfig(@Body() body: { enabled?: boolean; date?: string }) {
+    await this.circuitBreaker.updateSimulationConfig(body);
+    return { success: true, config: await this.circuitBreaker.getSimulationConfig() };
+  }
 }

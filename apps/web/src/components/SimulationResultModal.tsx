@@ -1,6 +1,6 @@
 'use client';
 
-interface SimulationResult {
+export interface SimulationResult {
   symbol: string;
   entryDate: string;
   entryPrice: number;
@@ -92,32 +92,36 @@ export default function SimulationResultModal({ result, onClose }: Props) {
           {/* Simple Price Chart */}
           <div className="bg-gray-700/50 rounded-lg p-3">
             <h3 className="text-sm font-semibold text-white mb-2">Price Chart</h3>
-            <div className="h-48 flex items-end gap-px">
-              {result.dailyData.map((day, idx) => {
-                const minPrice = Math.min(...result.dailyData.map(d => d.low));
-                const maxPrice = Math.max(...result.dailyData.map(d => d.high));
-                const range = maxPrice - minPrice || 1;
-                const height = ((day.close - minPrice) / range) * 100;
-                const stopHeight = ((day.stopPrice - minPrice) / range) * 100;
-                const isUp = day.close >= day.open;
+            {(() => {
+              const minPrice = Math.min(...result.dailyData.map(d => d.low));
+              const maxPrice = Math.max(...result.dailyData.map(d => d.high));
+              const range = maxPrice - minPrice || 1;
+              return (
+                <div className="h-48 flex items-end gap-px">
+                  {result.dailyData.map((day, idx) => {
+                    const height = ((day.close - minPrice) / range) * 100;
+                    const stopHeight = ((day.stopPrice - minPrice) / range) * 100;
+                    const isUp = day.close >= day.open;
 
-                return (
-                  <div key={idx} className="flex-1 relative" title={`${day.date}: $${day.close.toFixed(2)}`}>
-                    <div
-                      className={`w-full ${isUp ? 'bg-green-500' : 'bg-red-500'}`}
-                      style={{ height: `${Math.max(height, 2)}%` }}
-                    />
-                    <div
-                      className="absolute w-full border-t border-red-400"
-                      style={{ bottom: `${stopHeight}%` }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
+                    return (
+                      <div key={idx} className="flex-1 relative" title={`${day.date}: $${day.close.toFixed(2)}`}>
+                        <div
+                          className={`w-full ${isUp ? 'bg-green-500' : 'bg-red-500'}`}
+                          style={{ height: `${Math.max(height, 2)}%` }}
+                        />
+                        <div
+                          className="absolute w-full border-t border-red-400"
+                          style={{ bottom: `${stopHeight}%` }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             <div className="flex justify-between text-xs text-gray-500 mt-1">
               <span>{result.dailyData[0]?.date}</span>
-              <span className="text-red-400">-- Stop line</span>
+              <span className="text-red-400">— Stop line</span>
               <span>{result.dailyData[result.dailyData.length - 1]?.date}</span>
             </div>
           </div>

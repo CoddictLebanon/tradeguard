@@ -6,7 +6,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: process.env.FRONTEND_URL || 'http://localhost:666',
     credentials: true,
   });
 
@@ -15,7 +15,7 @@ async function bootstrap() {
     transform: true,
   }));
 
-  const port = process.env.PORT || 3001;
+  const port = process.env.PORT || 667;
   await app.listen(port);
   console.log(`TradeGuard API running on port ${port}`);
 }

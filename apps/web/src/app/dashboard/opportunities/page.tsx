@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
-import SimulationResultModal from '@/components/SimulationResultModal';
+import SimulationResultModal, { SimulationResult } from '@/components/SimulationResultModal';
 
 interface PositionSizeResult {
   status: 'OK' | 'REJECT';
@@ -81,7 +81,7 @@ export default function OpportunitiesPage() {
   const [positionCalc, setPositionCalc] = useState<PositionSizeResult | null>(null);
   const [calculatingPosition, setCalculatingPosition] = useState(false);
   const [simulationConfig, setSimulationConfig] = useState<{ enabled: boolean; date: string | null } | null>(null);
-  const [simulationResult, setSimulationResult] = useState<any>(null);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [showSimulationResult, setShowSimulationResult] = useState(false);
   const [runningSimulation, setRunningSimulation] = useState(false);
   const [filters, setFilters] = useState<Filters>({

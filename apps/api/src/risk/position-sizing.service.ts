@@ -183,4 +183,109 @@ export class PositionSizingService implements OnModuleInit {
       updatedAt: new Date(),
     });
   }
+
+  /**
+   * Ultra-conservative swing-trading position sizing
+   *
+   * Rules:
+   * - STOP = PULLBACK_LOW * (1 - BUFFER)
+   * - stop_pct = (ENTRY - STOP) / ENTRY
+   * - MAX_STOP_PCT = 0.06 (6%) - REJECT if exceeded
+   * - RISK_USD = EQUITY * RISK_PCT
+   * - shares = floor(RISK_USD / (ENTRY - STOP))
+   * - position_usd = shares * ENTRY
+   */
+  calculateSwingPosition(input: {
+    symbol: string;
+    entry: number;
+    pullbackLow: number;
+    buffer?: number;
+  }): {
+    status: 'OK' | 'REJECT';
+    symbol: string;
+    entry: number;
+    stop: number | null;
+    stop_pct: number | null;
+    risk_usd?: number;
+    risk_per_share?: number;
+    shares?: number;
+    position_usd?: number;
+    max_loss_usd?: number;
+    reason?: string;
+  } {
+    const { symbol, entry, pullbackLow } = input;
+    const buffer = input.buffer ?? this.accountConfig.stopBuffer ?? 0.007;
+    const equity = this.accountConfig.totalCapital;
+    const riskPct = this.accountConfig.riskPerTradePercent / 100; // Convert 0.15 to 0.0015
+
+    // Calculate STOP = PULLBACK_LOW * (1 - BUFFER)
+    const stop = Math.round(pullbackLow * (1 - buffer) * 100) / 100;
+
+    // Validate entry > stop
+    if (entry <= stop) {
+      return {
+        status: 'REJECT',
+        symbol,
+        entry,
+        stop,
+        stop_pct: null,
+        reason: 'Entry price must be above stop price',
+      };
+    }
+
+    // Calculate stop_pct = (ENTRY - STOP) / ENTRY
+    const stopPct = (entry - stop) / entry;
+
+    // Calculate RISK_USD = EQUITY * RISK_PCT
+    const riskUsd = Math.round(equity * riskPct * 100) / 100;
+
+    // Calculate risk_per_share = ENTRY - STOP
+    const riskPerShare = entry - stop;
+
+    // Calculate shares = floor(RISK_USD / risk_per_share)
+    const shares = Math.floor(riskUsd / riskPerShare);
+
+    // Calculate position_usd = shares * ENTRY
+    const positionUsd = Math.round(shares * entry * 100) / 100;
+
+    // Calculate actual max loss = shares * risk_per_share
+    const maxLossUsd = Math.round(shares * riskPerShare * 100) / 100;
+
+    // Common result fields
+    const result = {
+      symbol,
+      entry,
+      stop,
+      stop_pct: stopPct,
+      risk_usd: riskUsd,
+      risk_per_share: Math.round(riskPerShare * 100) / 100,
+      shares,
+      position_usd: positionUsd,
+      max_loss_usd: maxLossUsd,
+    };
+
+    // Enforce MAX_STOP_PCT = 0.06 (6%)
+    const maxStopPct = this.riskLimits.maxStopDistancePercent / 100; // Convert 6 to 0.06
+    if (stopPct > maxStopPct) {
+      return {
+        status: 'REJECT' as const,
+        ...result,
+        reason: `Stop distance ${(stopPct * 100).toFixed(2)}% exceeds maximum ${this.riskLimits.maxStopDistancePercent}%`,
+      };
+    }
+
+    // Validate shares > 0
+    if (shares <= 0) {
+      return {
+        status: 'REJECT' as const,
+        ...result,
+        reason: 'Position size too small (0 shares)',
+      };
+    }
+
+    return {
+      status: 'OK' as const,
+      ...result,
+    };
+  }
 }

@@ -17,7 +17,6 @@ export interface TradeReasoning {
   bullCase: string;
   bearCase: string;
   confidence: number;
-  suggestedEntry: number;
   suggestedTrailPercent: number;
   warnings: string[];
 }
@@ -123,7 +122,6 @@ export class AIService {
         bullCase: 'Unable to analyze',
         bearCase: 'Unable to analyze',
         confidence: 50,
-        suggestedEntry: params.currentPrice,
         suggestedTrailPercent: 10,
         warnings: ['AI analysis failed'],
       };

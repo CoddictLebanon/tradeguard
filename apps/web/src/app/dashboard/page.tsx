@@ -5,22 +5,26 @@ import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 
 interface DashboardData {
-  tradingState: {
+  state: {
     mode: 'paper' | 'live';
     isPaused: boolean;
     pauseReason: string | null;
     dailyPnL: number;
     weeklyPnL: number;
+    monthlyPnL: number;
     consecutiveLosses: number;
     openPositionsCount: number;
+    capitalDeployed: number;
   };
   limits: {
-    dailyLossLimit: number;
-    weeklyLossLimit: number;
-    maxPositionSize: number;
+    dailyLossLimitPercent: number;
+    weeklyLossLimitPercent: number;
+    monthlyLossLimitPercent: number;
     maxOpenPositions: number;
+    maxCapitalDeployedPercent: number;
   };
-  ibConnected: boolean;
+  tradingMode: 'paper' | 'live';
+  canTrade: boolean;
 }
 
 export default function DashboardPage() {
@@ -31,7 +35,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!token) return;
-    
+
     const fetchData = async () => {
       try {
         const result = await api.getDashboard(token);
@@ -55,7 +59,7 @@ export default function DashboardPage() {
 
   if (error) {
     return (
-      <div className="bg-red-500/10 border border-red-500 text-red-500 p4 rounded">
+      <div className="bg-red-500/10 border border-red-500 text-red-500 p-4 rounded">
         {error}
       </div>
     );
@@ -63,7 +67,7 @@ export default function DashboardPage() {
 
   if (!data) return null;
 
-  const { tradingState, limits, ibConnected } = data;
+  const { state: tradingState, limits, canTrade } = data;
 
   return (
     <div className="space-y-6">
@@ -91,13 +95,13 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* IB Connection */}
+        {/* Can Trade */}
         <div className="bg-gray-800 p-6 rounded-lg">
-          <div className="text-gray-400 text-sm">IB Connection</div>
+          <div className="text-gray-400 text-sm">Trading Status</div>
           <div className={`mt-2 text-2xl font-bold ${
-            ibConnected ? 'text-green-500' : 'text-red-500'
+            canTrade ? 'text-green-500' : 'text-red-500'
           }`}>
-            {ibConnected ? 'Connected' : 'Disconnected'}
+            {canTrade ? 'Ready' : 'Blocked'}
           </div>
         </div>
 
@@ -121,7 +125,7 @@ export default function DashboardPage() {
       </div>
 
       {/* P/L Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-gray-800 p-6 rounded-lg">
           <div className="text-gray-400 text-sm">Daily P/L</div>
           <div className={`mt-2 text-3xl font-bold ${
@@ -130,7 +134,7 @@ export default function DashboardPage() {
             {tradingState.dailyPnL >= 0 ? '+' : ''}${tradingState.dailyPnL.toFixed(2)}
           </div>
           <div className="mt-2 text-gray-500 text-sm">
-            Limit: -{limits.dailyLossLimit}%
+            Limit: -{limits.dailyLossLimitPercent}%
           </div>
         </div>
 
@@ -142,8 +146,31 @@ export default function DashboardPage() {
             {tradingState.weeklyPnL >= 0 ? '+' : ''}${tradingState.weeklyPnL.toFixed(2)}
           </div>
           <div className="mt-2 text-gray-500 text-sm">
-            Limit: -{limits.weeklyLossLimit}%
+            Limit: -{limits.weeklyLossLimitPercent}%
           </div>
+        </div>
+
+        <div className="bg-gray-800 p-6 rounded-lg">
+          <div className="text-gray-400 text-sm">Monthly P/L</div>
+          <div className={`mt-2 text-3xl font-bold ${
+            tradingState.monthlyPnL >= 0 ? 'text-green-500' : 'text-red-500'
+          }`}>
+            {tradingState.monthlyPnL >= 0 ? '+' : ''}${tradingState.monthlyPnL.toFixed(2)}
+          </div>
+          <div className="mt-2 text-gray-500 text-sm">
+            Limit: -{limits.monthlyLossLimitPercent}%
+          </div>
+        </div>
+      </div>
+
+      {/* Capital Deployed */}
+      <div className="bg-gray-800 p-6 rounded-lg">
+        <div className="text-gray-400 text-sm">Capital Deployed</div>
+        <div className="mt-2 text-2xl font-bold text-white">
+          ${tradingState.capitalDeployed.toLocaleString()}
+        </div>
+        <div className="mt-2 text-gray-500 text-sm">
+          Max: {limits.maxCapitalDeployedPercent}% of portfolio
         </div>
       </div>
     </div>

@@ -12,12 +12,15 @@ import {
   TradingState,
   CircuitBreakerEvent,
   DEFAULT_SAFETY_LIMITS,
+  SimulationConfig,
+  DEFAULT_SIMULATION_CONFIG,
 } from './safety.types';
 
 @Injectable()
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
   private limits: SafetyLimits = DEFAULT_SAFETY_LIMITS;
+  private simulationConfig: SimulationConfig = DEFAULT_SIMULATION_CONFIG;
   private state: TradingState = {
     mode: 'paper',
     isPaused: false,
@@ -61,6 +64,13 @@ export class CircuitBreakerService {
       });
       if (stateSetting) {
         this.state = { ...this.state, ...stateSetting.value };
+      }
+
+      const simSetting = await this.settingRepo.findOne({
+        where: { key: 'simulation_config' },
+      });
+      if (simSetting) {
+        this.simulationConfig = { ...DEFAULT_SIMULATION_CONFIG, ...simSetting.value };
       }
 
       await this.refreshState();
@@ -395,5 +405,39 @@ export class CircuitBreakerService {
 
   isPaperMode(): boolean {
     return this.state.mode === 'paper';
+  }
+
+  async getSimulationConfig(): Promise<SimulationConfig> {
+    return { ...this.simulationConfig };
+  }
+
+  async updateSimulationConfig(config: Partial<SimulationConfig>): Promise<void> {
+    this.simulationConfig = { ...this.simulationConfig, ...config };
+    await this.settingRepo.save({
+      key: 'simulation_config',
+      value: this.simulationConfig,
+      updatedAt: new Date(),
+    });
+
+    await this.activityRepo.save({
+      type: ActivityType.SETTING_CHANGED,
+      message: config.enabled !== undefined
+        ? (config.enabled ? 'Simulation mode enabled' : 'Simulation mode disabled')
+        : 'Simulation config updated',
+      details: this.simulationConfig,
+    });
+
+    this.logger.log(`Simulation config updated: ${JSON.stringify(this.simulationConfig)}`);
+  }
+
+  isSimulationMode(): boolean {
+    return this.simulationConfig.enabled && this.simulationConfig.date !== null;
+  }
+
+  getSimulationDate(): Date | null {
+    if (!this.simulationConfig.enabled || !this.simulationConfig.date) {
+      return null;
+    }
+    return new Date(this.simulationConfig.date);
   }
 }

@@ -1,9 +1,10 @@
 // apps/api/src/strategy/conservative-trading.types.ts
 
 export interface AccountConfig {
-  totalCapital: number;           // e.g., 1_000_000
-  riskPerTradePercent: number;    // 0.10 to 0.20 (default 0.15)
+  totalCapital: number;           // e.g., 1_000_000 (equity)
+  riskPerTradePercent: number;    // 0.15% = 0.0015 -> $1,500 risk per trade
   maxCapitalDeployedPercent: number; // 20-30%
+  stopBuffer: number;             // 0.007 = 0.7% buffer below pullback_low
 }
 
 export interface RiskLimits {
@@ -17,8 +18,9 @@ export interface RiskLimits {
 
 export const DEFAULT_ACCOUNT_CONFIG: AccountConfig = {
   totalCapital: 1_000_000,
-  riskPerTradePercent: 0.15,
+  riskPerTradePercent: 0.15,  // 0.15% of capital = $1,500 per trade
   maxCapitalDeployedPercent: 25,
+  stopBuffer: 0.007,  // 0.7% buffer below pullback_low for stop
 };
 
 export const DEFAULT_RISK_LIMITS: RiskLimits = {

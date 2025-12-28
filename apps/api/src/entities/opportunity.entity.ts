@@ -13,17 +13,17 @@ export class Opportunity extends BaseEntity {
   @Column()
   symbol: string;
 
+  @Column({ nullable: true })
+  companyName: string;
+
+  @Column({ nullable: true })
+  logoUrl: string;
+
   @Column('decimal', { precision: 5, scale: 2 })
   score: number;
 
   @Column('jsonb')
-  factors: {
-    volumeSurge: number;
-    technicalBreakout: number;
-    sectorMomentum: number;
-    newsSentiment: number;
-    volatilityFit: number;
-  };
+  factors: Record<string, number | string | boolean>;
 
   @Column('decimal', { precision: 10, scale: 2 })
   currentPrice: number;
@@ -39,6 +39,9 @@ export class Opportunity extends BaseEntity {
 
   @Column('decimal', { precision: 5, scale: 2, nullable: true })
   aiConfidence: number;
+
+  @Column({ nullable: true })
+  aiRecommendation: string; // BUY, HOLD, AVOID
 
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   suggestedEntry: number;

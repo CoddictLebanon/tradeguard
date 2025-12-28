@@ -40,6 +40,11 @@ Technical Indicators:
 Recent News:
 {newsHeadlines}
 
+Recommendations:
+- BUY: Price expected to rise. Good for stocks above moving averages with positive momentum.
+- HOLD: Wait for better entry or more confirmation.
+- AVOID: Too risky or unclear direction.
+
 Provide your analysis in JSON format:
 {
   "recommendation": "BUY|HOLD|AVOID",
@@ -47,7 +52,6 @@ Provide your analysis in JSON format:
   "bullCase": "What could go right",
   "bearCase": "What could go wrong",
   "confidence": 0-100,
-  "suggestedEntry": price,
   "suggestedTrailPercent": percentage,
   "warnings": ["any concerns..."]
 }`;

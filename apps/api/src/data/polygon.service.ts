@@ -26,6 +26,28 @@ export class PolygonService {
     return response.json() as Promise<T>;
   }
 
+  async getTickerDetails(symbol: string): Promise<{
+    name: string;
+    market_cap?: number;
+    description?: string;
+    logo_url?: string;
+    icon_url?: string;
+  } | null> {
+    try {
+      const data = await this.fetch<any>(`/v3/reference/tickers/${symbol}`);
+      if (!data.results) return null;
+      return {
+        name: data.results.name || symbol,
+        market_cap: data.results.market_cap,
+        description: data.results.description,
+        logo_url: data.results.branding?.logo_url,
+        icon_url: data.results.branding?.icon_url,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async getQuote(symbol: string): Promise<StockQuote> {
     const data = await this.fetch<any>(`/v2/aggs/ticker/${symbol}/prev`);
 
@@ -61,10 +83,13 @@ export class PolygonService {
     limit: number = 50,
   ): Promise<StockBar[]> {
     const to = new Date().toISOString().split('T')[0];
-    const from = new Date(Date.now() - limit * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // For daily bars, we need to account for weekends/holidays
+    // Trading days are ~252/year, so multiply by 7/5 to convert trading days to calendar days
+    const calendarDays = timespan === 'day' ? Math.ceil(limit * 1.5) : limit;
+    const from = new Date(Date.now() - calendarDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const data = await this.fetch<any>(
-      `/v2/aggs/ticker/${symbol}/range/1/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=${limit}`,
+      `/v2/aggs/ticker/${symbol}/range/1/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=5000`,
     );
 
     if (!data.results) {
@@ -79,6 +104,45 @@ export class PolygonService {
       volume: bar.v,
       timestamp: new Date(bar.t),
     }));
+  }
+
+  async getBarsForDateRange(
+    symbol: string,
+    fromDate: string,
+    toDate: string,
+    timespan: 'minute' | 'hour' | 'day' = 'day',
+  ): Promise<StockBar[]> {
+    const data = await this.fetch<any>(
+      `/v2/aggs/ticker/${symbol}/range/1/${timespan}/${fromDate}/${toDate}?adjusted=true&sort=asc&limit=5000`,
+    );
+
+    if (!data.results) {
+      return [];
+    }
+
+    return data.results.map((bar: any) => ({
+      open: bar.o,
+      high: bar.h,
+      low: bar.l,
+      close: bar.c,
+      volume: bar.v,
+      timestamp: new Date(bar.t),
+    }));
+  }
+
+  async getBarsAsOf(
+    symbol: string,
+    asOfDate: string,
+    lookbackDays: number = 220,
+    timespan: 'day' = 'day',
+  ): Promise<StockBar[]> {
+    const toDate = asOfDate;
+    const to = new Date(asOfDate);
+    const calendarDays = Math.ceil(lookbackDays * 1.5); // Account for weekends
+    const from = new Date(to.getTime() - calendarDays * 24 * 60 * 60 * 1000);
+    const fromDate = from.toISOString().split('T')[0];
+
+    return this.getBarsForDateRange(symbol, fromDate, toDate, timespan);
   }
 
   async getNews(symbol?: string, limit: number = 20): Promise<NewsArticle[]> {

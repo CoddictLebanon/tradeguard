@@ -14,6 +14,10 @@ import { TradeUniverseModule } from './universe/trade-universe.module';
 import { EventsModule } from './events/events.module';
 import { RiskModule } from './risk/risk.module';
 import { LoggingModule } from './logging/logging.module';
+import { PositionsModule } from './positions/positions.module';
+import { WatchlistModule } from './watchlist/watchlist.module';
+import { ActivityModule } from './activity/activity.module';
+import { SimulationModule } from './simulation/simulation.module';
 
 @Module({
   imports: [
@@ -35,6 +39,10 @@ import { LoggingModule } from './logging/logging.module';
     ScannerModule,
     SafetyModule,
     LoggingModule,
+    PositionsModule,
+    WatchlistModule,
+    ActivityModule,
+    SimulationModule,
   ],
   controllers: [],
   providers: [],
