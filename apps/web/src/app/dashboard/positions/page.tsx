@@ -4,18 +4,24 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 
-interface Position {
+interface PositionRaw {
   id: string;
   symbol: string;
   shares: number;
   entryPrice: number;
+  currentPrice: number | null;
+  highestPrice?: number | null;
+  highWaterMark?: number | null;
+  trailPercent: number;
+  stopPrice?: number;
+  status: string;
+  openedAt: string;
+}
+
+interface Position extends Omit<PositionRaw, 'currentPrice'> {
   currentPrice: number;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
-  trailPercent: number;
-  highWaterMark: number;
-  status: string;
-  openedAt: string;
 }
 
 export default function PositionsPage() {
@@ -27,8 +33,22 @@ export default function PositionsPage() {
   const fetchPositions = async () => {
     if (!token) return;
     try {
-      const data = await api.getPositions(token);
-      setPositions(data);
+      const data: PositionRaw[] = await api.getPositions(token);
+      // Calculate P&L for each position
+      const enrichedPositions: Position[] = data.map((pos) => {
+        const current = Number(pos.currentPrice) || Number(pos.entryPrice);
+        const entry = Number(pos.entryPrice);
+        const shares = Number(pos.shares);
+        const unrealizedPnl = (current - entry) * shares;
+        const unrealizedPnlPercent = entry > 0 ? ((current - entry) / entry) * 100 : 0;
+        return {
+          ...pos,
+          currentPrice: current,
+          unrealizedPnl,
+          unrealizedPnlPercent,
+        };
+      });
+      setPositions(enrichedPositions);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load positions');
@@ -78,7 +98,7 @@ export default function PositionsPage() {
       )}
 
       {positions.length === 0 ? (
-        <div className="bg-gray-800 p8 rounded-lg text-center text-gray-400">
+        <div className="bg-gray-800 p-8 rounded-lg text-center text-gray-400">
           No open positions. Approve an opportunity to open a position.
         </div>
       ) : (
@@ -88,35 +108,43 @@ export default function PositionsPage() {
               <tr className="border-b border-gray-700">
                 <th className="text-left py-3 px-4 text-gray-400 font-medium">Symbol</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium">Shares</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium">Capital</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium">Entry</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium">Current</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium">Stop</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium">Stop %</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium">P/L</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Trail</th>
                 <th className="text-right py-3 px-4 text-gray-400 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {positions.map((pos) => (
-                <tr key={pos.id} className="border-b border-gray-800 hover:bg-gray-800/50">
-                  <td className="py-4 px-4 font-medium text-white">{pos.symbol}</td>
-                  <td className="py-4 px-4 text-right text-gray-300">{pos.shares}</td>
-                  <td className="py-4 px-4 text-right text-gray-300">${pos.entryPrice.toFixed(2)}</td>
-                  <td className="py-4 px-4 text-right text-gray-300">${pos.currentPrice.toFixed(2)}</td>
-                  <td className={`py-4 px-4 text-right font-medium ${pos.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
-                    <span className="text-xs ml-1">({pos.unrealizedPnlPercent.toFixed(1)}%)</span>
-                  </td>
-                  <td className="py-4 px-4 text-right text-gray-300">{pos.trailPercent}%</td>
-                  <td className="py-4 px-4 text-right">
-                    <button
-                      onClick={() => handleClose(pos.id)}
-                      className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
-                    >
-                      Close
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {positions.map((pos) => {
+                const capital = pos.shares * Number(pos.entryPrice);
+                const stopPct = ((Number(pos.entryPrice) - Number(pos.stopPrice)) / Number(pos.entryPrice)) * 100;
+                return (
+                  <tr key={pos.id} className="border-b border-gray-800 hover:bg-gray-800/50">
+                    <td className="py-4 px-4 font-medium text-white">{pos.symbol}</td>
+                    <td className="py-4 px-4 text-right text-gray-300">{pos.shares}</td>
+                    <td className="py-4 px-4 text-right text-blue-400 font-medium">${capital.toLocaleString()}</td>
+                    <td className="py-4 px-4 text-right text-gray-300">${Number(pos.entryPrice).toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-gray-300">${pos.currentPrice.toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-red-400">${Number(pos.stopPrice).toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-yellow-400">{stopPct.toFixed(2)}%</td>
+                    <td className={`py-4 px-4 text-right font-medium ${pos.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                      <span className="text-xs ml-1">({pos.unrealizedPnlPercent.toFixed(1)}%)</span>
+                    </td>
+                    <td className="py-4 px-4 text-right">
+                      <button
+                        onClick={() => handleClose(pos.id)}
+                        className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
+                      >
+                        Close
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
