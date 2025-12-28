@@ -30,6 +30,16 @@ export class Position extends BaseEntity {
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   highestPrice: number;
 
+  // Structure-based trailing stop fields
+  @Column('decimal', { precision: 10, scale: 2, nullable: true })
+  structuralHigh: number; // Reference high for current structure
+
+  @Column('decimal', { precision: 10, scale: 2, nullable: true })
+  structuralLow: number; // Defended low used for stop calculation
+
+  @Column({ nullable: true })
+  structuralHighDate: Date; // Date of the structural high
+
   @Column({
     type: 'enum',
     enum: PositionStatus,

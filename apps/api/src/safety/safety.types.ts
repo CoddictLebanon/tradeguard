@@ -55,3 +55,16 @@ export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   enabled: false,
   date: null,
 };
+
+// Structure-based trailing stop configuration
+export interface TrailingStopConfig {
+  stopBuffer: number; // Default 0.007 (0.7%), valid range 0.005-0.010
+  bounceConfirmationPercent: number; // Default 0.02 (2%) - close must be >= low * (1 + this)
+  lookbackDays: number; // Number of days to look back for structural analysis (default 63)
+}
+
+export const DEFAULT_TRAILING_STOP_CONFIG: TrailingStopConfig = {
+  stopBuffer: 0.007, // 0.7% below structural low
+  bounceConfirmationPercent: 0.02, // 2% bounce confirmation
+  lookbackDays: 63, // ~3 months of trading days
+};

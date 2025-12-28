@@ -5,6 +5,7 @@ import { TradeSetupService } from './trade-setup.service';
 import { TradeQualificationService } from './trade-qualification.service';
 import { TradeExecutionService } from './trade-execution.service';
 import { BuyQualificationService } from './buy-qualification.service';
+import { TrailingStopService } from './trailing-stop.service';
 import { DataModule } from '../data/data.module';
 import { TradeUniverseModule } from '../universe/trade-universe.module';
 import { EventsModule } from '../events/events.module';
@@ -30,6 +31,7 @@ import { ActivityLog } from '../entities/activity-log.entity';
     TradeQualificationService,
     TradeExecutionService,
     BuyQualificationService,
+    TrailingStopService,
   ],
   exports: [
     ScoringService,
@@ -37,6 +39,7 @@ import { ActivityLog } from '../entities/activity-log.entity';
     TradeQualificationService,
     TradeExecutionService,
     BuyQualificationService,
+    TrailingStopService,
   ],
 })
 export class StrategyModule {}

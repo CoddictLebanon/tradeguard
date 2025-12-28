@@ -4,7 +4,7 @@ export interface SimulationInput {
   entryPrice: number;
   shares: number;
   stopPrice: number;
-  trailPercent: number; // e.g., 0.06 for 6%
+  trailPercent?: number; // deprecated - now using structure-based trailing stops
   maxDays?: number; // default 60
 }
 

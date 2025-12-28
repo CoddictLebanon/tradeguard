@@ -13,6 +13,7 @@ export enum ActivityType {
   TRADE_BLOCKED = 'trade_blocked',
   CIRCUIT_BREAKER = 'circuit_breaker',
   SETTING_CHANGED = 'setting_changed',
+  TRAILING_STOP_UPDATED = 'trailing_stop_updated',
   SYSTEM = 'system',
 }
 
