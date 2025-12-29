@@ -260,10 +260,10 @@ export const api = {
 
   // Simulation
   getSimulationConfig: (token: string) =>
-    apiRequest<{ enabled: boolean; date: string | null }>('/safety/simulation', { token }),
+    apiRequest<{ enabled: boolean; date: string | null; maxDays: number }>('/safety/simulation', { token }),
 
-  updateSimulationConfig: (token: string, config: { enabled?: boolean; date?: string }) =>
-    apiRequest<{ success: boolean; config: { enabled: boolean; date: string | null } }>(
+  updateSimulationConfig: (token: string, config: { enabled?: boolean; date?: string; maxDays?: number }) =>
+    apiRequest<{ success: boolean; config: { enabled: boolean; date: string | null; maxDays: number } }>(
       '/safety/simulation',
       { method: 'POST', token, body: config }
     ),
@@ -292,4 +292,99 @@ export const api = {
       events: Array<{ day: number; date: string; type: string; price: number; stopPrice: number; note?: string }>;
       dailyData: Array<{ date: string; open: number; high: number; low: number; close: number; stopPrice: number }>;
     }>('/simulation/run', { method: 'POST', token, body: input }),
+
+  getSimulationStats: (token: string) =>
+    apiRequest<{
+      totalTrades: number;
+      winningTrades: number;
+      losingTrades: number;
+      winRate: number;
+      totalPnL: number;
+      avgPnL: number;
+      avgPnLPercent: number;
+      avgDaysHeld: number;
+      avgRMultiple: number;
+      bestTrade: { symbol: string; pnl: number; pnlPercent: number } | null;
+      worstTrade: { symbol: string; pnl: number; pnlPercent: number } | null;
+      totalCapitalDeployed: number;
+      profitFactor: number;
+    }>('/simulation/stats', { token }),
+
+  getSimulationHistory: (token: string, limit = 50) =>
+    apiRequest<Array<{
+      id: string;
+      symbol: string;
+      entryPrice: number;
+      exitPrice: number;
+      shares: number;
+      pnl: number;
+      pnlPercent: number;
+      daysHeld: number;
+      entryDate: string;
+      exitDate: string;
+      exitReason: string;
+      capitalDeployed: number;
+      rMultiple: number;
+      createdAt: string;
+      highestPrice: number;
+      initialStopPrice: number;
+      events: Array<{ day: number; date: string; type: string; price: number; stopPrice: number; note?: string }>;
+      dailyData: Array<{ date: string; open: number; high: number; low: number; close: number; stopPrice: number }>;
+    }>>(`/simulation/history?limit=${limit}`, { token }),
+
+  clearSimulationHistory: (token: string) =>
+    apiRequest<{ cleared: number }>('/simulation/history', { method: 'DELETE', token }),
+
+  // Interactive Brokers (via Python proxy on port 6680)
+  // Helper to add timeout to IB calls (proxy may hang if IB is disconnected)
+  getIBStatus: async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch('http://localhost:6680/status', { signal: controller.signal });
+      return res.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  reconnectIB: async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch('http://localhost:6680/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 7497 }),
+        signal: controller.signal,
+      });
+      return res.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  getIBAccount: async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch('http://localhost:6680/account', { signal: controller.signal });
+      if (!res.ok) throw new Error('Failed to get IB account');
+      return res.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  getIBPositions: async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch('http://localhost:6680/positions', { signal: controller.signal });
+      if (!res.ok) throw new Error('Failed to get IB positions');
+      return res.json();
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
 };

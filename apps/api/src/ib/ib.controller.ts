@@ -168,8 +168,19 @@ export class IBController {
   @Post('reconnect')
   @Roles(UserRole.ADMIN)
   async reconnect() {
-    await this.ibService.disconnect();
-    await this.ibService.connect();
-    return { status: this.ibService.getConnectionStatus() };
+    try {
+      await this.ibService.disconnect();
+      await this.ibService.connect();
+      return { status: this.ibService.getConnectionStatus() };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Connection failed';
+      throw new HttpException(
+        {
+          message: `Failed to connect to IB: ${message}. Make sure TWS or IB Gateway is running with API connections enabled on port 7497.`,
+          status: this.ibService.getConnectionStatus(),
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 }

@@ -80,7 +80,7 @@ export default function OpportunitiesPage() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [positionCalc, setPositionCalc] = useState<PositionSizeResult | null>(null);
   const [calculatingPosition, setCalculatingPosition] = useState(false);
-  const [simulationConfig, setSimulationConfig] = useState<{ enabled: boolean; date: string | null } | null>(null);
+  const [simulationConfig, setSimulationConfig] = useState<{ enabled: boolean; date: string | null; maxDays: number } | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [showSimulationResult, setShowSimulationResult] = useState(false);
   const [runningSimulation, setRunningSimulation] = useState(false);
@@ -196,7 +196,7 @@ export default function OpportunitiesPage() {
           shares: positionCalc.shares!,
           stopPrice: positionCalc.stop!,
           trailPercent: positionCalc.stop_pct!,
-          maxDays: 60,
+          maxDays: simulationConfig.maxDays,
         });
         setSimulationResult(result);
         setShowSimulationResult(true);
@@ -655,7 +655,7 @@ export default function OpportunitiesPage() {
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Entry Price</div>
-                    <div className="text-white font-mono">${positionCalc.entry.toFixed(2)}</div>
+                    <div className="text-white font-mono">${positionCalc.entry?.toFixed(2) || '0.00'}</div>
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Stop Price</div>
@@ -698,7 +698,7 @@ export default function OpportunitiesPage() {
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Entry Price</div>
-                    <div className="text-white font-mono">${positionCalc.entry.toFixed(2)}</div>
+                    <div className="text-white font-mono">${positionCalc.entry?.toFixed(2) || '0.00'}</div>
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Stop Price</div>

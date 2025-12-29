@@ -132,6 +132,16 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       const reqId = Math.floor(Math.random() * 10000);
       const summary: Partial<IBAccountSummary> = {};
 
+      const cleanup = () => {
+        this.ib.off(EventName.accountSummary, handler);
+        this.ib.off(EventName.accountSummaryEnd, endHandler);
+        try {
+          this.ib.cancelAccountSummary(reqId);
+        } catch {
+          // Ignore cancel errors
+        }
+      };
+
       const handler = (rId: number, account: string, tag: string, value: string) => {
         if (rId !== reqId) return;
 
@@ -156,8 +166,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
 
       const endHandler = (rId: number) => {
         if (rId !== reqId) return;
-        this.ib.off(EventName.accountSummary, handler);
-        this.ib.off(EventName.accountSummaryEnd, endHandler);
+        cleanup();
         resolve(summary as IBAccountSummary);
       };
 
@@ -167,8 +176,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       this.ib.reqAccountSummary(reqId, 'All', 'NetLiquidation,AvailableFunds,BuyingPower,TotalCashValue');
 
       setTimeout(() => {
-        this.ib.off(EventName.accountSummary, handler);
-        this.ib.off(EventName.accountSummaryEnd, endHandler);
+        cleanup();
         reject(new Error('Account summary timeout'));
       }, 5000);
     });
