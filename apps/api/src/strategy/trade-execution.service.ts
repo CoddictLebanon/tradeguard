@@ -119,10 +119,10 @@ export class TradeExecutionService {
       // Log the activity
       await this.activityRepo.save({
         type: ActivityType.POSITION_OPENED,
-        message: `Opened ${tradingMode} position: ${shares} shares of ${opportunity.symbol} at $${entryPrice.toFixed(2)}`,
+        positionId: position.id,
         symbol: opportunity.symbol,
+        message: `Opened ${tradingMode} position: ${shares} shares of ${opportunity.symbol} at $${entryPrice.toFixed(2)}`,
         details: {
-          positionId: position.id,
           shares,
           entryPrice,
           stopPrice,
