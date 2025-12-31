@@ -25,5 +25,13 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# Screenshots and test files
+*.png
+test-*.js
+test-*.ts
+start.sh
+test-results/
+debug-*
+
 # Database
 *.sqlite
