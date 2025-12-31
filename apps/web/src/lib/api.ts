@@ -150,6 +150,17 @@ export const api = {
       token,
     }),
 
+  getPositionActivity: (token: string, id: string) =>
+    apiRequest<Array<{
+      id: string;
+      type: string;
+      message: string;
+      details: Record<string, unknown>;
+      symbol: string;
+      positionId: string;
+      createdAt: string;
+    }>>(`/positions/${id}/activity`, { token }),
+
   updateTrailPercent: (token: string, id: string, trailPercent: number) =>
     apiRequest<{ success: boolean }>(`/positions/${id}/trail`, {
       method: 'PUT',
