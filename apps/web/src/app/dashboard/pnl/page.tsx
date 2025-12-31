@@ -60,19 +60,27 @@ export default function PnLPage() {
   const [simStats, setSimStats] = useState<SimulationStats | null>(null);
   const [simTrades, setSimTrades] = useState<SimulatedTrade[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'live' | 'simulation'>('simulation');
+  const [activeTab, setActiveTab] = useState<'live' | 'simulation'>('live');
   const [dailyTotalsOpen, setDailyTotalsOpen] = useState(false);
   const [selectedSimulation, setSelectedSimulation] = useState<SimulationResult | null>(null);
+  const [simulationEnabled, setSimulationEnabled] = useState(false);
 
   const fetchData = async () => {
     if (!token) return;
     try {
-      const [dashboardData, activityData, simulationStats, simulationHistory] = await Promise.all([
+      const [dashboardData, activityData, simulationStats, simulationHistory, simConfig] = await Promise.all([
         api.getDashboard(token),
         api.getActivityLog(token, 100),
         api.getSimulationStats(token),
         api.getSimulationHistory(token, 100),
+        api.getSimulationConfig(token),
       ]);
+
+      // Set simulation enabled state and default to simulation tab if enabled
+      setSimulationEnabled(simConfig.enabled);
+      if (simConfig.enabled) {
+        setActiveTab('simulation');
+      }
 
       setPnl({
         daily: dashboardData.state.dailyPnL || 0,
@@ -178,23 +186,25 @@ export default function PnLPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">P&L</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab('simulation')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'simulation' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300'}`}
-          >
-            Simulation
-          </button>
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'live' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}
-          >
-            Live Trades
-          </button>
-        </div>
+        {simulationEnabled && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setActiveTab('simulation')}
+              className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'simulation' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+            >
+              Simulation
+            </button>
+            <button
+              onClick={() => setActiveTab('live')}
+              className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'live' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+            >
+              Live Trades
+            </button>
+          </div>
+        )}
       </div>
 
-      {activeTab === 'simulation' ? (
+      {simulationEnabled && activeTab === 'simulation' ? (
         <>
           {/* Simulation Stats */}
           {simStats && simStats.totalTrades > 0 ? (
