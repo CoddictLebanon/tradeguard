@@ -21,6 +21,7 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
   });
   
   if (!response.ok) {
