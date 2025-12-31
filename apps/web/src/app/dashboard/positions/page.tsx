@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+import { PositionActivityDrawer } from '@/components/PositionActivityDrawer';
 
 interface PositionRaw {
   id: string;
@@ -29,12 +30,12 @@ export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
 
   const fetchPositions = async () => {
     if (!token) return;
     try {
       const data: PositionRaw[] = await api.getPositions(token);
-      // Calculate P&L for each position
       const enrichedPositions: Position[] = data.map((pos) => {
         const current = Number(pos.currentPrice) || Number(pos.entryPrice);
         const entry = Number(pos.entryPrice);
@@ -63,12 +64,10 @@ export default function PositionsPage() {
     return () => clearInterval(interval);
   }, [token]);
 
-  // Visual price fluctuation effect for live feel
   useEffect(() => {
     if (positions.length === 0) return;
     const fluctuateInterval = setInterval(() => {
       setPositions(prev => prev.map(pos => {
-        // Random fluctuation of +/- 0.15%
         const fluctuation = 1 + (Math.random() - 0.5) * 0.003;
         const newPrice = pos.currentPrice * fluctuation;
         const unrealizedPnl = (newPrice - Number(pos.entryPrice)) * pos.shares;
@@ -79,7 +78,8 @@ export default function PositionsPage() {
     return () => clearInterval(fluctuateInterval);
   }, [positions.length]);
 
-  const handleClose = async (id: string) => {
+  const handleClose = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!token || !confirm('Close this position?')) return;
     try {
       await api.closePosition(token, id);
@@ -138,7 +138,11 @@ export default function PositionsPage() {
                 const capital = pos.shares * Number(pos.entryPrice);
                 const stopPct = ((Number(pos.entryPrice) - Number(pos.stopPrice)) / Number(pos.entryPrice)) * 100;
                 return (
-                  <tr key={pos.id} className="border-b border-gray-800 hover:bg-gray-800/50">
+                  <tr
+                    key={pos.id}
+                    onClick={() => setSelectedPosition(pos)}
+                    className="border-b border-gray-800 hover:bg-gray-800/50 cursor-pointer"
+                  >
                     <td className="py-4 px-4 font-medium text-white">{pos.symbol}</td>
                     <td className="py-4 px-4 text-right text-gray-300 tabular-nums">{pos.shares}</td>
                     <td className="py-4 px-4 text-right text-blue-400 font-medium tabular-nums">${capital.toLocaleString()}</td>
@@ -152,7 +156,7 @@ export default function PositionsPage() {
                     </td>
                     <td className="py-4 px-4 text-right">
                       <button
-                        onClick={() => handleClose(pos.id)}
+                        onClick={(e) => handleClose(pos.id, e)}
                         className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
                       >
                         Close
@@ -165,6 +169,11 @@ export default function PositionsPage() {
           </table>
         </div>
       )}
+
+      <PositionActivityDrawer
+        position={selectedPosition}
+        onClose={() => setSelectedPosition(null)}
+      />
     </div>
   );
 }
