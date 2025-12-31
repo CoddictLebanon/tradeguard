@@ -155,11 +155,11 @@ export default function OpportunitiesPage() {
     setSelected(null); // Clear selection
     try {
       const asOfDate = simulationConfig?.enabled ? simulationConfig.date || undefined : undefined;
-      const result = await api.triggerScan(token, undefined, asOfDate);
-      await fetchOpportunities();
-      const count = result.opportunities?.length || 0;
+      await api.triggerScan(token, undefined, asOfDate);
+      const data = await api.getOpportunities(token);
+      setOpportunities(data);
       const dateMsg = asOfDate ? ` for ${asOfDate}` : '';
-      setScanMessage(count === 0 ? `Scan complete${dateMsg}. No stocks found.` : `Found ${count} opportunities${dateMsg}`);
+      setScanMessage(data.length === 0 ? `Scan complete${dateMsg}. No stocks found.` : `Found ${data.length} opportunities${dateMsg}`);
       setTimeout(() => setScanMessage(null), 10000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan failed');
