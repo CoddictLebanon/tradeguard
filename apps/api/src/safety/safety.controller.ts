@@ -133,7 +133,7 @@ export class SafetyController {
   @Post('simulation')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  async updateSimulationConfig(@Body() body: { enabled?: boolean; date?: string }) {
+  async updateSimulationConfig(@Body() body: { enabled?: boolean; date?: string; maxDays?: number }) {
     await this.circuitBreaker.updateSimulationConfig(body);
     return { success: true, config: await this.circuitBreaker.getSimulationConfig() };
   }

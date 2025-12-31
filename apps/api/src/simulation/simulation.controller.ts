@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Query, UseGuards, BadRequestException } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SimulationService } from './simulation.service';
 import { SimulationInput } from './simulation.types';
@@ -29,11 +29,8 @@ function validateSimulationInput(input: SimulationInput): void {
   if (typeof input.stopPrice !== 'number' || input.stopPrice <= 0) {
     throw new BadRequestException('stopPrice must be a positive number');
   }
-  if (typeof input.trailPercent !== 'number' || input.trailPercent <= 0 || input.trailPercent > 1) {
-    throw new BadRequestException('trailPercent must be between 0 and 1');
-  }
-  if (input.maxDays !== undefined && (typeof input.maxDays !== 'number' || input.maxDays < 1 || input.maxDays > 365)) {
-    throw new BadRequestException('maxDays must be between 1 and 365');
+  if (input.maxDays !== undefined && (typeof input.maxDays !== 'number' || input.maxDays < 1)) {
+    throw new BadRequestException('maxDays must be a positive number');
   }
 }
 
@@ -46,5 +43,21 @@ export class SimulationController {
   async runSimulation(@Body() input: SimulationInput) {
     validateSimulationInput(input);
     return this.simulationService.runSimulation(input);
+  }
+
+  @Get('stats')
+  async getStats() {
+    return this.simulationService.getSimulationStats();
+  }
+
+  @Get('history')
+  async getHistory(@Query('limit') limit?: string) {
+    return this.simulationService.getSimulationHistory(limit ? parseInt(limit, 10) : 50);
+  }
+
+  @Delete('history')
+  async clearHistory() {
+    const count = await this.simulationService.clearSimulationHistory();
+    return { cleared: count };
   }
 }

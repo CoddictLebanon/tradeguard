@@ -151,9 +151,9 @@ export default function OpportunitiesPage() {
     if (!token) return;
     setScanning(true);
     setScanMessage(null);
+    setOpportunities([]); // Clear existing opportunities immediately
+    setSelected(null); // Clear selection
     try {
-      // Clean up duplicates first
-      await api.dedupOpportunities(token);
       const asOfDate = simulationConfig?.enabled ? simulationConfig.date || undefined : undefined;
       const result = await api.triggerScan(token, undefined, asOfDate);
       await fetchOpportunities();

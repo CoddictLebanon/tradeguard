@@ -9,7 +9,7 @@ import asyncio
 import nest_asyncio
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from ib_insync import IB, Stock, MarketOrder, StopOrder
+from ib_insync import IB, Stock, MarketOrder, LimitOrder, StopOrder
 
 # Allow nested event loops (needed for Flask + asyncio)
 nest_asyncio.apply()
@@ -147,7 +147,7 @@ def get_positions():
 
 @app.route('/order/buy', methods=['POST'])
 def place_buy_order():
-    """Place a market buy order"""
+    """Place a market buy order that executes immediately"""
     if not ib.isConnected():
         return jsonify({'error': 'Not connected to IB'}), 503
 
@@ -159,16 +159,20 @@ def place_buy_order():
         contract = Stock(symbol, 'SMART', 'USD')
         ib.qualifyContracts(contract)
 
+        # Use a standard market order
         order = MarketOrder('BUY', quantity)
+        order.outsideRth = True  # Allow after-hours trading
         trade = ib.placeOrder(contract, order)
-        ib.sleep(1)
+        ib.sleep(2)  # Wait for fill
 
-        print(f"[IB Proxy] BUY {quantity} {symbol} - Order ID: {trade.order.orderId}")
+        print(f"[IB Proxy] BUY {quantity} {symbol} - Order ID: {trade.order.orderId}, Status: {trade.orderStatus.status}")
 
         return jsonify({
             'success': True,
             'orderId': trade.order.orderId,
-            'status': trade.orderStatus.status
+            'status': trade.orderStatus.status,
+            'filled': trade.orderStatus.filled,
+            'avgFillPrice': trade.orderStatus.avgFillPrice
         })
     except Exception as e:
         print(f"[IB Proxy] Buy order error: {e}")
@@ -190,6 +194,8 @@ def place_stop_order():
         ib.qualifyContracts(contract)
 
         order = StopOrder('SELL', quantity, stop_price)
+        order.outsideRth = True  # Allow after-hours
+        order.tif = 'GTC'  # Good till cancelled
         trade = ib.placeOrder(contract, order)
         ib.sleep(1)
 
@@ -202,6 +208,40 @@ def place_stop_order():
         })
     except Exception as e:
         print(f"[IB Proxy] Stop order error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/order/stop/<int:order_id>', methods=['PUT'])
+def modify_stop_order(order_id):
+    """Modify an existing stop loss order"""
+    if not ib.isConnected():
+        return jsonify({'error': 'Not connected to IB'}), 503
+
+    try:
+        data = request.json
+        symbol = data['symbol'].upper()
+        quantity = int(data['quantity'])
+        new_stop_price = float(data['stopPrice'])
+
+        contract = Stock(symbol, 'SMART', 'USD')
+        ib.qualifyContracts(contract)
+
+        # Create modified order with same ID
+        order = StopOrder('SELL', quantity, new_stop_price)
+        order.orderId = order_id
+        order.outsideRth = True
+        order.tif = 'GTC'
+        trade = ib.placeOrder(contract, order)
+        ib.sleep(1)
+
+        print(f"[IB Proxy] MODIFIED STOP {order_id}: {symbol} @ ${new_stop_price}")
+
+        return jsonify({
+            'success': True,
+            'orderId': trade.order.orderId,
+            'status': trade.orderStatus.status
+        })
+    except Exception as e:
+        print(f"[IB Proxy] Modify stop error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/order/sell', methods=['POST'])
@@ -219,6 +259,8 @@ def place_sell_order():
         ib.qualifyContracts(contract)
 
         order = MarketOrder('SELL', quantity)
+        order.outsideRth = True  # Allow after-hours trading
+        order.tif = 'GTC'  # Good Till Cancelled
         trade = ib.placeOrder(contract, order)
         ib.sleep(1)
 

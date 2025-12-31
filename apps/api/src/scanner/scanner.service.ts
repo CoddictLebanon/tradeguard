@@ -62,7 +62,8 @@ export class ScannerService {
 
     this.isScanning = true;
     this.scanStartTime = Date.now();
-    this.logger.log('Starting watchlist scan with buy qualification criteria');
+    const scanMode = asOfDate ? `SIMULATION mode (as of ${asOfDate})` : 'LIVE mode (current data)';
+    this.logger.log(`Starting watchlist scan - ${scanMode}`);
 
     try {
       // Get active watchlist items
@@ -85,6 +86,21 @@ export class ScannerService {
       const successfulResults = qualificationResults.filter(r => r.success && r.metrics);
       this.logger.log(`${successfulResults.length} stocks have complete metrics`);
 
+      // Filter out stocks where stop loss distance exceeds 6%
+      const MAX_STOP_DISTANCE = 0.06; // 6%
+      const STOP_BUFFER = 0.007; // 0.7% buffer below pullback low
+      const filteredResults = successfulResults.filter(r => {
+        const metrics = r.metrics!;
+        const stopPrice = metrics.pullbackLow * (1 - STOP_BUFFER);
+        const stopDistance = (metrics.close - stopPrice) / metrics.close;
+        if (stopDistance > MAX_STOP_DISTANCE) {
+          this.logger.debug(`${r.symbol} excluded: stop distance ${(stopDistance * 100).toFixed(2)}% > ${MAX_STOP_DISTANCE * 100}%`);
+          return false;
+        }
+        return true;
+      });
+      this.logger.log(`${filteredResults.length} stocks pass stop distance filter (max ${MAX_STOP_DISTANCE * 100}%)`);
+
       // Log some failed stocks for debugging
       const failed = qualificationResults.filter(r => !r.success).slice(0, 5);
       for (const f of failed) {
@@ -93,17 +109,11 @@ export class ScannerService {
 
       const opportunities: Opportunity[] = [];
 
-      for (const result of successfulResults) {
-        const metrics = result.metrics!;
+      // Clear all existing pending opportunities to get fresh results each scan
+      await this.opportunityRepo.delete({ status: OpportunityStatus.PENDING });
 
-        // Check if we already have a pending or approved opportunity for this symbol
-        const existing = await this.opportunityRepo.findOne({
-          where: {
-            symbol: result.symbol,
-            status: In([OpportunityStatus.PENDING, OpportunityStatus.APPROVED]),
-            expiresAt: MoreThan(new Date()),
-          },
-        });
+      for (const result of filteredResults) {
+        const metrics = result.metrics!;
 
         // Store all metrics in factors as numbers/strings for JSON
         const factors: Record<string, number | string | boolean> = {
@@ -137,15 +147,6 @@ export class ScannerService {
           worstDrop: metrics.worstDrop,
         };
 
-        if (existing) {
-          // Update existing opportunity with new metrics
-          existing.currentPrice = metrics.close;
-          existing.factors = factors;
-          await this.opportunityRepo.save(existing);
-          opportunities.push(existing);
-          continue;
-        }
-
         // Get company name and logo
         let companyName: string | undefined;
         let logoUrl: string | undefined;
@@ -160,30 +161,6 @@ export class ScannerService {
           }
         } catch {
           // Ignore errors fetching company name
-        }
-
-        // Get AI analysis
-        let aiAnalysis: { summary: string; bullCase: string; bearCase: string; confidence: number; recommendation: string; suggestedTrailPercent: number } | null = null;
-        if (this.aiService.isConfigured()) {
-          try {
-            const news = await this.polygonService.getNews(result.symbol, 5);
-            const indicators = await this.polygonService.getTechnicalIndicators(result.symbol);
-
-            aiAnalysis = await this.aiService.getTradeReasoning({
-              symbol: result.symbol,
-              currentPrice: metrics.close,
-              score: 100,
-              factors: {
-                pullback: metrics.pullback * 100,
-                extPct: metrics.extPct * 100,
-                adv45M: metrics.adv45 / 1_000_000,
-              },
-              indicators: indicators as unknown as Record<string, number>,
-              newsHeadlines: news.map((n) => n.title),
-            });
-          } catch (error) {
-            this.logger.warn(`AI analysis failed for ${result.symbol}: ${(error as Error).message}`);
-          }
         }
 
         // Calculate score based on pullback quality (5-8% is ideal range)
@@ -205,16 +182,11 @@ export class ScannerService {
           score: Math.min(100, score),
           factors,
           currentPrice: metrics.close,
-          aiAnalysis: aiAnalysis?.summary,
-          bullCase: aiAnalysis?.bullCase,
-          bearCase: aiAnalysis?.bearCase,
-          aiConfidence: aiAnalysis?.confidence,
-          aiRecommendation: aiAnalysis?.recommendation,
           suggestedEntry: metrics.close,
-          suggestedTrailPercent: aiAnalysis?.suggestedTrailPercent || suggestedTrailPercent,
+          suggestedTrailPercent,
           status: OpportunityStatus.PENDING,
           expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000), // 4 hours
-        });
+        } as Partial<Opportunity>);
 
         await this.opportunityRepo.save(opportunity);
         opportunities.push(opportunity);
@@ -231,6 +203,16 @@ export class ScannerService {
   }
 
   async manualScan(symbols?: string[], asOfDate?: string): Promise<Opportunity[]> {
+    // If simulation mode (asOfDate provided), clear existing pending opportunities
+    // since they were scanned with different (current) data
+    if (asOfDate) {
+      this.logger.log(`Simulation scan requested for date: ${asOfDate}`);
+      await this.clearPendingOpportunities();
+      // Also force reset isScanning in case it's stuck
+      this.isScanning = false;
+      this.scanStartTime = null;
+    }
+
     if (symbols && symbols.length > 0) {
       // Add to watchlist temporarily
       for (const symbol of symbols) {

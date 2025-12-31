@@ -9,6 +9,7 @@ import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
 import {
   TrailingStopConfig,
   DEFAULT_TRAILING_STOP_CONFIG,
+  DEFAULT_SIMULATION_CONFIG,
 } from '../safety/safety.types';
 
 export interface StructuralAnalysis {
@@ -254,7 +255,7 @@ export class TrailingStopService {
     bars: StockBar[],
     entryPrice: number,
     initialStopPrice: number,
-    maxDays: number = 60,
+    maxDays: number = DEFAULT_SIMULATION_CONFIG.maxDays,
   ): {
     exitPrice: number;
     exitDate: string;

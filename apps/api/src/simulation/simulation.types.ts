@@ -5,7 +5,7 @@ export interface SimulationInput {
   shares: number;
   stopPrice: number;
   trailPercent?: number; // deprecated - now using structure-based trailing stops
-  maxDays?: number; // default 60
+  maxDays?: number; // defaults to simulation config value (see DEFAULT_SIMULATION_CONFIG)
 }
 
 export interface SimulationEvent {

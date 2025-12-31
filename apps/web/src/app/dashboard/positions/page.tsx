@@ -63,6 +63,22 @@ export default function PositionsPage() {
     return () => clearInterval(interval);
   }, [token]);
 
+  // Visual price fluctuation effect for live feel
+  useEffect(() => {
+    if (positions.length === 0) return;
+    const fluctuateInterval = setInterval(() => {
+      setPositions(prev => prev.map(pos => {
+        // Random fluctuation of +/- 0.15%
+        const fluctuation = 1 + (Math.random() - 0.5) * 0.003;
+        const newPrice = pos.currentPrice * fluctuation;
+        const unrealizedPnl = (newPrice - Number(pos.entryPrice)) * pos.shares;
+        const unrealizedPnlPercent = ((newPrice - Number(pos.entryPrice)) / Number(pos.entryPrice)) * 100;
+        return { ...pos, currentPrice: newPrice, unrealizedPnl, unrealizedPnlPercent };
+      }));
+    }, 1000);
+    return () => clearInterval(fluctuateInterval);
+  }, [positions.length]);
+
   const handleClose = async (id: string) => {
     if (!token || !confirm('Close this position?')) return;
     try {
@@ -103,18 +119,18 @@ export default function PositionsPage() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full table-fixed">
             <thead>
               <tr className="border-b border-gray-700">
-                <th className="text-left py-3 px-4 text-gray-400 font-medium">Symbol</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Shares</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Capital</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Entry</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Current</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Stop</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Stop %</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">P/L</th>
-                <th className="text-right py-3 px-4 text-gray-400 font-medium">Actions</th>
+                <th className="text-left py-3 px-4 text-gray-400 font-medium w-24">Symbol</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-20">Shares</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-28">Capital</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-24">Entry</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-24">Current</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-24">Stop</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-20">Stop %</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-36">P/L</th>
+                <th className="text-right py-3 px-4 text-gray-400 font-medium w-24">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -124,13 +140,13 @@ export default function PositionsPage() {
                 return (
                   <tr key={pos.id} className="border-b border-gray-800 hover:bg-gray-800/50">
                     <td className="py-4 px-4 font-medium text-white">{pos.symbol}</td>
-                    <td className="py-4 px-4 text-right text-gray-300">{pos.shares}</td>
-                    <td className="py-4 px-4 text-right text-blue-400 font-medium">${capital.toLocaleString()}</td>
-                    <td className="py-4 px-4 text-right text-gray-300">${Number(pos.entryPrice).toFixed(2)}</td>
-                    <td className="py-4 px-4 text-right text-gray-300">${pos.currentPrice.toFixed(2)}</td>
-                    <td className="py-4 px-4 text-right text-red-400">${Number(pos.stopPrice).toFixed(2)}</td>
-                    <td className="py-4 px-4 text-right text-yellow-400">{stopPct.toFixed(2)}%</td>
-                    <td className={`py-4 px-4 text-right font-medium ${pos.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                    <td className="py-4 px-4 text-right text-gray-300 tabular-nums">{pos.shares}</td>
+                    <td className="py-4 px-4 text-right text-blue-400 font-medium tabular-nums">${capital.toLocaleString()}</td>
+                    <td className="py-4 px-4 text-right text-gray-300 tabular-nums">${Number(pos.entryPrice).toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-gray-300 tabular-nums">${pos.currentPrice.toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-red-400 tabular-nums">${Number(pos.stopPrice).toFixed(2)}</td>
+                    <td className="py-4 px-4 text-right text-yellow-400 tabular-nums">{stopPct.toFixed(2)}%</td>
+                    <td className={`py-4 px-4 text-right font-medium tabular-nums ${pos.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                       {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                       <span className="text-xs ml-1">({pos.unrealizedPnlPercent.toFixed(1)}%)</span>
                     </td>

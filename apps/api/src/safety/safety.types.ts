@@ -49,11 +49,13 @@ export const DEFAULT_SAFETY_LIMITS: SafetyLimits = {
 export interface SimulationConfig {
   enabled: boolean;
   date: string | null; // ISO date string YYYY-MM-DD
+  maxDays: number; // Maximum days to hold a simulated position (default 300)
 }
 
 export const DEFAULT_SIMULATION_CONFIG: SimulationConfig = {
   enabled: false,
   date: null,
+  maxDays: 300,
 };
 
 // Structure-based trailing stop configuration

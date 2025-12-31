@@ -64,6 +64,11 @@ export class BuyQualificationService {
         ? await this.polygonService.getBarsAsOf(symbol, asOfDate, 260)
         : await this.polygonService.getBars(symbol, 'day', 260);
 
+      if (asOfDate) {
+        const lastBarDate = rawBars.length > 0 ? rawBars[rawBars.length - 1].timestamp.toISOString().split('T')[0] : 'N/A';
+        this.logger.debug(`${symbol}: Historical data loaded - last bar date: ${lastBarDate}, requested asOf: ${asOfDate}`);
+      }
+
       if (rawBars.length < 221) {
         return {
           symbol,
