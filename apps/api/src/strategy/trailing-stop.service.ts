@@ -201,6 +201,8 @@ export class TrailingStopService {
         // Log the update
         await this.activityRepo.save({
           type: ActivityType.TRAILING_STOP_UPDATED,
+          positionId: position.id,
+          symbol: position.symbol,
           message: `Stop raised for ${position.symbol}: $${currentStop.toFixed(2)} → $${analysis.newStopPrice.toFixed(2)}`,
           details: update,
         });
