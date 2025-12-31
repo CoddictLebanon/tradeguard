@@ -1,11 +1,18 @@
 import { Controller, Get, Post, Put, Param, Body, UseGuards } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PositionsService } from './positions.service';
+import { ActivityLog } from '../entities/activity-log.entity';
 
 @Controller('positions')
 @UseGuards(JwtAuthGuard)
 export class PositionsController {
-  constructor(private readonly positionsService: PositionsService) {}
+  constructor(
+    private readonly positionsService: PositionsService,
+    @InjectRepository(ActivityLog)
+    private readonly activityRepo: Repository<ActivityLog>,
+  ) {}
 
   @Get()
   async getPositions() {
@@ -25,6 +32,14 @@ export class PositionsController {
   @Get(':id')
   async getPosition(@Param('id') id: string) {
     return this.positionsService.findById(id);
+  }
+
+  @Get(':id/activity')
+  async getPositionActivity(@Param('id') id: string) {
+    return this.activityRepo.find({
+      where: { positionId: id },
+      order: { createdAt: 'ASC' },
+    });
   }
 
   @Post(':id/close')
