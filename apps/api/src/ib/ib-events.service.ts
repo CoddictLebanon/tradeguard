@@ -102,10 +102,15 @@ export class IBEventsService {
       await this.positionRepo.save(entryPosition);
 
       await this.activityRepo.save({
-        type: ActivityType.ORDER_FILLED,
-        message: `Opened position: ${entryPosition.shares} ${entryPosition.symbol} @ $${event.avgFillPrice}`,
+        type: ActivityType.POSITION_OPENED,
+        positionId: entryPosition.id,
         symbol: entryPosition.symbol,
-        details: { positionId: entryPosition.id, avgFillPrice: event.avgFillPrice },
+        message: `Opened position: ${entryPosition.shares} ${entryPosition.symbol} @ $${event.avgFillPrice}`,
+        details: {
+          entryPrice: event.avgFillPrice,
+          shares: entryPosition.shares,
+          stopPrice: entryPosition.stopPrice,
+        },
       });
       return;
     }
@@ -154,9 +159,10 @@ export class IBEventsService {
 
       await manager.save(ActivityLog, {
         type: ActivityType.POSITION_CLOSED,
-        message: `Closed ${position.symbol}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
+        positionId: position.id,
         symbol: position.symbol,
-        details: { positionId: position.id, exitPrice, pnl, pnlPercent, exitReason },
+        message: `Closed ${position.symbol}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
+        details: { exitPrice, pnl, pnlPercent, exitReason },
       });
     });
 
