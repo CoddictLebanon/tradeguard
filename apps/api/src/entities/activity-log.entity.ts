@@ -33,4 +33,7 @@ export class ActivityLog extends BaseEntity {
 
   @Column({ nullable: true })
   symbol: string;
+
+  @Column({ nullable: true })
+  positionId: string;
 }
