@@ -12,6 +12,7 @@ const navItems = [
   { href: '/dashboard/positions', label: 'Positions', icon: '📈' },
   { href: '/dashboard/pnl', label: 'P&L', icon: '💰' },
   { href: '/dashboard/watchlist', label: 'Watchlist', icon: '👁' },
+  { href: '/dashboard/activity', label: 'Activity', icon: '📋' },
   { href: '/dashboard/docs', label: 'Docs', icon: '📖' },
 ];
 
