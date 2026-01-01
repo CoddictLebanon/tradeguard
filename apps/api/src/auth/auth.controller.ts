@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Body,
   HttpCode,
   HttpStatus,
@@ -54,6 +55,15 @@ class ChangePasswordDto {
   @IsString()
   @MinLength(8)
   newPassword!: string;
+}
+
+class UpdateProfileDto {
+  @IsEmail()
+  newEmail!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
 }
 
 @Controller('auth')
@@ -113,5 +123,19 @@ export class AuthController {
       dto.newPassword,
     );
     return { message: 'Password changed successfully' };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  @HttpCode(HttpStatus.OK)
+  async updateProfile(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<AuthResponse> {
+    return this.authService.updateProfile(
+      req.user.id,
+      dto.newEmail,
+      dto.password,
+    );
   }
 }

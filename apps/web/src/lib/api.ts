@@ -52,6 +52,19 @@ export const api = {
       body: { email, password },
     }),
 
+  updateProfile: (token: string, data: { newEmail: string; password: string }) =>
+    apiRequest<{ accessToken: string; user: { id: string; email: string; name: string; role: string } }>(
+      '/auth/profile',
+      { method: 'PATCH', token, body: data }
+    ),
+
+  changePassword: (token: string, data: { currentPassword: string; newPassword: string }) =>
+    apiRequest<{ message: string }>('/auth/change-password', {
+      method: 'POST',
+      token,
+      body: data,
+    }),
+
   // Dashboard
   getDashboard: (token: string) =>
     apiRequest<{

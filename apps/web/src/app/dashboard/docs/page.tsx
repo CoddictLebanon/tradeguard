@@ -3,25 +3,68 @@
 import { useState } from 'react';
 import { documentationContent, DocCategory, DocSection } from './content';
 
+// Style for inline code/technical terms
+const codeStyle = 'bg-gray-700/50 text-blue-400 px-1.5 py-0.5 rounded text-sm font-mono';
+
+// Auto-detect and style technical terms (applied before markdown conversion)
+function styleTechnicalTerms(text: string): string {
+  // Skip if already has backticks (will be handled by markdown)
+  if (text.includes('`')) return text;
+
+  return text
+    // API paths: /auth/login, /positions/:id, etc.
+    .replace(/(?<![`\w])(\/[a-z][a-z0-9\-\/:]*)/gi, '`$1`')
+    // camelCase variables: entryPrice, stopPrice, currentPrice, etc.
+    .replace(/\b([a-z]+[A-Z][a-zA-Z0-9]*)\b/g, '`$1`')
+    // Technical abbreviations with numbers: SMA200, SMA50, SMA20, ADV45
+    .replace(/\b([A-Z]{2,}\d+)\b/g, '`$1`')
+    // Ports and specific numbers in technical context: port 667, port 4002
+    .replace(/port\s+(\d+)/gi, 'port `$1`')
+    // File paths and extensions: .env, proxy.py, etc.
+    .replace(/\b(\w+\.(py|ts|tsx|js|json|env|sql))\b/g, '`$1`')
+    // localhost with port
+    .replace(/(localhost:\d+)/g, '`$1`')
+    // uuid, varchar, jsonb, decimal, timestamp, enum, int, boolean, text (database types)
+    .replace(/\b(uuid|varchar|jsonb|decimal|timestamp|boolean)\b/g, '`$1`');
+}
+
+// Pre-process content to add backticks around technical terms
+function preprocessContent(content: string): string {
+  return content
+    .split('\n')
+    .map(line => {
+      // Skip lines that are headers, code blocks, or already processed
+      if (line.startsWith('#') || line.startsWith('```') || line.startsWith('|')) {
+        return line;
+      }
+      return styleTechnicalTerms(line);
+    })
+    .join('\n');
+}
+
 // Simple markdown renderer (no external library)
 function renderMarkdown(content: string): string {
-  return content
+  // First preprocess to add backticks around technical terms
+  const processed = preprocessContent(content);
+
+  return processed
     // Headers
     .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-white mt-6 mb-2">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold text-white mt-8 mb-3">$1</h2>')
     .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-white mb-4">$1</h1>')
     // Code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-800 p-4 rounded-lg overflow-x-auto my-4 text-sm"><code class="text-green-400">$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1.5 py-0.5 rounded text-green-400 text-sm">$1</code>')
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-900 border border-gray-700 p-4 rounded-lg overflow-x-auto my-4 text-sm"><code class="text-green-400">$2</code></pre>')
+    // Inline code (backticks) - must come before bold to avoid conflicts
+    .replace(/`([^`]+)`/g, `<code class="${codeStyle}">$1</code>`)
     // Bold
     .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
-    // Tables
+    // Tables - improved styling
     .replace(/\|(.+)\|/g, (match) => {
       const cells = match.split('|').filter(c => c.trim());
-      const isHeader = match.includes('---');
-      if (isHeader) return '';
-      return `<tr>${cells.map(c => `<td class="border border-gray-700 px-3 py-2">${c.trim()}</td>`).join('')}</tr>`;
+      if (match.includes('---')) return '';
+      return `<tr class="border-b border-gray-700">${cells.map(c => {
+        return `<td class="px-3 py-2 text-gray-300">${c.trim()}</td>`;
+      }).join('')}</tr>`;
     })
     // Lists
     .replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-300">• $1</li>')

@@ -143,6 +143,46 @@ export class AuthService {
     this.logger.log(`Password changed for user: ${user.email}`);
   }
 
+  async updateProfile(
+    userId: string,
+    newEmail: string,
+    password: string,
+  ): Promise<AuthResponse> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Password is incorrect');
+    }
+
+    // Check if new email is already taken
+    if (newEmail !== user.email) {
+      const existingUser = await this.userRepo.findOne({ where: { email: newEmail } });
+      if (existingUser) {
+        throw new ConflictException('Email is already in use');
+      }
+    }
+
+    const oldEmail = user.email;
+    user.email = newEmail;
+    await this.userRepo.save(user);
+
+    await this.activityRepo.save({
+      type: ActivityType.SYSTEM,
+      message: `User email changed from ${oldEmail} to ${newEmail}`,
+      details: { userId: user.id },
+    });
+
+    this.logger.log(`Email changed for user: ${oldEmail} -> ${newEmail}`);
+
+    // Return new token with updated email
+    return this.generateToken(user);
+  }
+
   async createInitialAdmin(): Promise<void> {
     const adminCount = await this.userRepo.count({ where: { role: UserRole.ADMIN } });
     if (adminCount === 0) {

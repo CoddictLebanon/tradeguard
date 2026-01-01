@@ -13,9 +13,12 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
   private readonly proxyPath: string;
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
+  private readonly pythonPath: string;
+
   constructor() {
     // Path to the proxy script (relative to the trading root)
     this.proxyPath = path.resolve(__dirname, '../../../../ib-proxy/proxy.py');
+    this.pythonPath = path.resolve(__dirname, '../../../../ib-proxy/venv/bin/python');
   }
 
   async onModuleInit() {
@@ -39,8 +42,8 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log(`Starting IB Proxy from: ${this.proxyPath}`);
 
-      // Spawn the Python proxy process
-      this.proxyProcess = spawn('python3', [this.proxyPath], {
+      // Spawn the Python proxy process using venv
+      this.proxyProcess = spawn(this.pythonPath, [this.proxyPath], {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         env: {
