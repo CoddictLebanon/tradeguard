@@ -53,7 +53,7 @@ export const api = {
     }),
 
   updateProfile: (token: string, data: { newEmail: string; password: string }) =>
-    apiRequest<{ accessToken: string; user: { id: string; email: string; name: string; role: string } }>(
+    apiRequest<{ accessToken: string; user: { id: string; email: string; name: string; role: 'admin' | 'trader' | 'viewer' } }>(
       '/auth/profile',
       { method: 'PATCH', token, body: data }
     ),
