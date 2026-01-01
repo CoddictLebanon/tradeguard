@@ -479,4 +479,38 @@ export const api = {
       clearTimeout(timeout);
     }
   },
+
+  // Telegram
+  getTelegramConfig: (token: string) =>
+    apiRequest<{
+      enabled: boolean;
+      botToken: string | null;
+      chatId: string | null;
+      notifyOpened: boolean;
+      notifyStopRaised: boolean;
+      notifyClosed: boolean;
+    }>('/telegram/config', { token }),
+
+  updateTelegramConfig: (
+    token: string,
+    config: {
+      enabled?: boolean;
+      botToken?: string;
+      chatId?: string;
+      notifyOpened?: boolean;
+      notifyStopRaised?: boolean;
+      notifyClosed?: boolean;
+    },
+  ) =>
+    apiRequest<{ success: boolean }>('/telegram/config', {
+      method: 'POST',
+      token,
+      body: config,
+    }),
+
+  sendTelegramTest: (token: string) =>
+    apiRequest<{ success: boolean; error?: string }>('/telegram/test', {
+      method: 'POST',
+      token,
+    }),
 };
