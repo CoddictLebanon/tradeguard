@@ -304,6 +304,52 @@ export const api = {
       createdAt: string;
     }>>(`/activity?limit=${limit}`, { token }),
 
+  // Activity Feed (centralized)
+  getActivityFeed: (
+    token: string,
+    params?: {
+      startDate?: string;
+      endDate?: string;
+      type?: string;
+      symbol?: string;
+      outcome?: 'win' | 'loss';
+      limit?: number;
+      offset?: number;
+    }
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (params?.startDate) searchParams.set('startDate', params.startDate);
+    if (params?.endDate) searchParams.set('endDate', params.endDate);
+    if (params?.type) searchParams.set('type', params.type);
+    if (params?.symbol) searchParams.set('symbol', params.symbol);
+    if (params?.outcome) searchParams.set('outcome', params.outcome);
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+    if (params?.offset) searchParams.set('offset', String(params.offset));
+    const query = searchParams.toString();
+    return apiRequest<{
+      items: Array<{
+        id: string;
+        timestamp: string;
+        type: string;
+        symbol: string | null;
+        message: string;
+        details: {
+          entryPrice?: number;
+          exitPrice?: number;
+          stopPrice?: number;
+          oldStopPrice?: number;
+          newStopPrice?: number;
+          pnl?: number;
+          outcome?: 'win' | 'loss';
+          shares?: number;
+        };
+        positionId: string | null;
+      }>;
+      total: number;
+      hasMore: boolean;
+    }>(`/activity/feed${query ? `?${query}` : ''}`, { token });
+  },
+
   // Simulation
   getSimulationConfig: (token: string) =>
     apiRequest<{ enabled: boolean; date: string | null; maxDays: number }>('/safety/simulation', { token }),
