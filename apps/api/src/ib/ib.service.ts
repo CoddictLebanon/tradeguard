@@ -9,6 +9,7 @@ import {
   IBConnectionStatus,
 } from './ib.types';
 import { CircuitBreakerService } from '../safety/circuit-breaker.service';
+import { PolygonService } from '../data/polygon.service';
 
 @Injectable()
 export class IBService implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +26,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     private readonly eventEmitter: EventEmitter2,
     @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreaker: CircuitBreakerService,
+    private readonly polygonService: PolygonService,
   ) {
     this.config = {
       host: this.configService.get<string>('IB_HOST', '127.0.0.1'),
@@ -222,26 +224,48 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     quantity: number,
     limitPrice?: number,
   ): Promise<number> {
-    // Always try to place order via Python proxy first (works for paper and live)
+    // Try to place order via Python proxy
     try {
       const response = await fetch('http://localhost:6680/order/buy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity }),
       });
+
       const result = await response.json() as { success: boolean; orderId?: number; error?: string };
-      if (result.success && result.orderId) {
+
+      // If proxy returned an error (including "Not connected to IB"), fail the order
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error || `Order failed with status ${response.status}`;
+        this.logger.error(`[IB PROXY] BUY order failed: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+
+      if (result.orderId) {
         this.logger.log(`[IB PROXY] BUY order placed: ${result.orderId} - ${quantity} ${symbol}`);
         return result.orderId;
-      } else {
-        throw new Error(result.error || 'Order failed');
       }
-    } catch (proxyError) {
-      this.logger.warn(`IB Proxy unavailable: ${(proxyError as Error).message}, falling back to simulation`);
-    }
 
-    // Fallback: simulate if proxy unavailable
-    return this.simulateBuyOrder(symbol, quantity, limitPrice);
+      throw new Error('Order placed but no orderId returned');
+    } catch (proxyError) {
+      // Check if this is a network error (proxy unreachable) vs IB Gateway error
+      const errorMessage = (proxyError as Error).message;
+
+      // If it's an IB Gateway connection error, propagate it - don't simulate
+      if (errorMessage.includes('Not connected') || errorMessage.includes('IB')) {
+        this.logger.error(`[IB] Cannot place order - IB Gateway disconnected: ${errorMessage}`);
+        throw proxyError;
+      }
+
+      // Only fall back to simulation if proxy is completely unreachable (network error)
+      if (errorMessage.includes('fetch') || errorMessage.includes('ECONNREFUSED')) {
+        this.logger.warn(`IB Proxy unreachable, falling back to simulation: ${errorMessage}`);
+        return this.simulateBuyOrder(symbol, quantity, limitPrice);
+      }
+
+      // Any other error should propagate
+      throw proxyError;
+    }
   }
 
   private async simulateBuyOrder(
@@ -282,9 +306,14 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async getSimulatedPrice(symbol: string): Promise<number> {
-    // In paper mode, we might not have IB connection
-    // Return a reasonable simulated price or use Polygon data
-    return 100; // Placeholder - should integrate with data service
+    try {
+      const quote = await this.polygonService.getQuote(symbol);
+      this.logger.log(`[PAPER] Got real price for ${symbol}: $${quote.price}`);
+      return quote.price;
+    } catch (error) {
+      this.logger.error(`[PAPER] Failed to get price for ${symbol}: ${error}`);
+      throw new Error(`Cannot get price for ${symbol} - Polygon API failed`);
+    }
   }
 
   async placeSellOrder(
@@ -292,26 +321,47 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     quantity: number,
     limitPrice?: number,
   ): Promise<number> {
-    // Always try to place order via Python proxy first (works for paper and live)
+    // Try to place order via Python proxy
     try {
       const response = await fetch('http://localhost:6680/order/sell', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity }),
       });
+
       const result = await response.json() as { success: boolean; orderId?: number; error?: string };
-      if (result.success && result.orderId) {
+
+      // If proxy returned an error (including "Not connected to IB"), fail the order
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error || `Order failed with status ${response.status}`;
+        this.logger.error(`[IB PROXY] SELL order failed: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+
+      if (result.orderId) {
         this.logger.log(`[IB PROXY] SELL order placed: ${result.orderId} - ${quantity} ${symbol}`);
         return result.orderId;
-      } else {
-        throw new Error(result.error || 'Order failed');
       }
-    } catch (proxyError) {
-      this.logger.warn(`IB Proxy unavailable: ${(proxyError as Error).message}, falling back to simulation`);
-    }
 
-    // Fallback: simulate if proxy unavailable
-    return this.simulateSellOrder(symbol, quantity, limitPrice);
+      throw new Error('Order placed but no orderId returned');
+    } catch (proxyError) {
+      const errorMessage = (proxyError as Error).message;
+
+      // If it's an IB Gateway connection error, propagate it - don't simulate
+      if (errorMessage.includes('Not connected') || errorMessage.includes('IB')) {
+        this.logger.error(`[IB] Cannot place sell order - IB Gateway disconnected: ${errorMessage}`);
+        throw proxyError;
+      }
+
+      // Only fall back to simulation if proxy is completely unreachable (network error)
+      if (errorMessage.includes('fetch') || errorMessage.includes('ECONNREFUSED')) {
+        this.logger.warn(`IB Proxy unreachable, falling back to simulation: ${errorMessage}`);
+        return this.simulateSellOrder(symbol, quantity, limitPrice);
+      }
+
+      // Any other error should propagate
+      throw proxyError;
+    }
   }
 
   private async simulateSellOrder(
@@ -400,8 +450,34 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.ib.cancelOrder(orderId);
-    this.logger.log(`Cancelled order ${orderId}`);
+    // Use proxy to cancel real orders
+    try {
+      const response = await fetch(`http://localhost:6680/order/cancel/${orderId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json() as { success: boolean; error?: string };
+
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error || `Cancel failed with status ${response.status}`;
+        this.logger.error(`[IB PROXY] Cancel order failed: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+
+      this.logger.log(`[IB PROXY] Cancelled order ${orderId}`);
+    } catch (proxyError) {
+      const errorMessage = (proxyError as Error).message;
+
+      // If it's an IB Gateway connection error, propagate it
+      if (errorMessage.includes('Not connected') || errorMessage.includes('IB')) {
+        this.logger.error(`[IB] Cannot cancel order - IB Gateway disconnected: ${errorMessage}`);
+        throw proxyError;
+      }
+
+      // If proxy is unreachable, still throw - we can't silently fail on cancel
+      this.logger.error(`[IB] Failed to cancel order ${orderId}: ${errorMessage}`);
+      throw proxyError;
+    }
   }
 
   async modifyTrailingStop(
@@ -552,28 +628,44 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity: shares, stopPrice: newStopPrice }),
       });
-      const result = await response.json() as { success: boolean; orderId?: number; error?: string };
-      if (result.success) {
-        this.logger.log(`[IB PROXY] Modified STOP ${orderId}: ${currentStopPrice} -> ${newStopPrice}`);
-        return { success: true };
-      } else {
-        throw new Error(result.error || 'Modify stop failed');
-      }
-    } catch (proxyError) {
-      this.logger.warn(`IB Proxy unavailable for stop modify: ${(proxyError as Error).message}`);
-    }
 
-    // Fallback to simulation
-    this.logger.log(`[SIMULATED] Modified STOP order ${orderId}: ${currentStopPrice} -> ${newStopPrice}`);
-    this.eventEmitter.emit('ib.orderStatus', {
-      orderId,
-      status: 'PreSubmitted',
-      filled: 0,
-      remaining: shares,
-      avgFillPrice: 0,
-      stopPrice: newStopPrice,
-    });
-    return { success: true };
+      const result = await response.json() as { success: boolean; orderId?: number; error?: string };
+
+      // If proxy returned an error (including "Not connected to IB"), fail
+      if (!response.ok || !result.success) {
+        const errorMsg = result.error || `Modify stop failed with status ${response.status}`;
+        this.logger.error(`[IB PROXY] Modify STOP failed: ${errorMsg}`);
+        return { success: false, reason: errorMsg };
+      }
+
+      this.logger.log(`[IB PROXY] Modified STOP ${orderId}: ${currentStopPrice} -> ${newStopPrice}`);
+      return { success: true };
+    } catch (proxyError) {
+      const errorMessage = (proxyError as Error).message;
+
+      // If it's an IB Gateway connection error, fail - don't simulate
+      if (errorMessage.includes('Not connected') || errorMessage.includes('IB')) {
+        this.logger.error(`[IB] Cannot modify stop - IB Gateway disconnected: ${errorMessage}`);
+        return { success: false, reason: errorMessage };
+      }
+
+      // Only fall back to simulation if proxy is completely unreachable (network error)
+      if (errorMessage.includes('fetch') || errorMessage.includes('ECONNREFUSED')) {
+        this.logger.warn(`IB Proxy unreachable, simulating stop modify: ${errorMessage}`);
+        this.eventEmitter.emit('ib.orderStatus', {
+          orderId,
+          status: 'PreSubmitted',
+          filled: 0,
+          remaining: shares,
+          avgFillPrice: 0,
+          stopPrice: newStopPrice,
+        });
+        return { success: true };
+      }
+
+      // Any other error should fail
+      return { success: false, reason: errorMessage };
+    }
   }
 
   isPaperMode(): boolean {

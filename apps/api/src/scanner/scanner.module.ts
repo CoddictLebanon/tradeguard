@@ -5,7 +5,6 @@ import { ScannerController } from './scanner.controller';
 import { WatchlistItem } from '../entities/watchlist.entity';
 import { Opportunity } from '../entities/opportunity.entity';
 import { StrategyModule } from '../strategy/strategy.module';
-import { AIModule } from '../ai/ai.module';
 import { DataModule } from '../data/data.module';
 import { RiskModule } from '../risk/risk.module';
 
@@ -13,7 +12,6 @@ import { RiskModule } from '../risk/risk.module';
   imports: [
     TypeOrmModule.forFeature([WatchlistItem, Opportunity]),
     StrategyModule,
-    AIModule,
     DataModule,
     RiskModule,
   ],

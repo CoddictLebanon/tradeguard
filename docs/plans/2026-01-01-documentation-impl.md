@@ -1,3 +1,232 @@
+# TradeGuard Documentation Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Create comprehensive documentation: AI reference file for Claude + human-readable Docs page in dashboard.
+
+**Architecture:** AI reference as markdown in repo root. Human docs as React page with static TypeScript content, rendered with simple markdown parsing.
+
+**Tech Stack:** Next.js, React, TypeScript, Tailwind CSS
+
+---
+
+## Task 1: Create AI Reference Document
+
+**Files:**
+- Create: `docs/AI-REFERENCE.md`
+
+**Step 1: Create the AI reference document**
+
+```markdown
+# TradeGuard AI Reference
+
+> This document is for Claude to read at the start of conversations to understand the system accurately.
+> Last updated: 2026-01-01
+
+## System Overview
+
+**Tech Stack:**
+- API: NestJS (TypeScript) on port 667
+- Web: Next.js (React) on port 3000
+- Database: PostgreSQL with TypeORM
+- IB Proxy: Python FastAPI on port 6680
+- Data: Polygon.io API (all market data)
+
+**Core Flow:**
+```
+Watchlist → Scanner → Opportunities → Approve → Position → Trailing Stop → Exit
+```
+
+## Data Sources (CRITICAL - NO FAKE DATA)
+
+| Data | Source | Notes |
+|------|--------|-------|
+| Stock prices | Polygon API | `getQuote()`, `getBars()` |
+| Technical indicators | Polygon API | Calculated from OHLCV bars |
+| Position currentPrice | Polygon API | Refreshed on every fetch |
+| Company info | Polygon API | `getTickerDetails()` |
+| Earnings dates | Finnhub API | Calendar data only |
+| Order execution | IB Gateway | Via Python proxy |
+
+**INVARIANT:** All price data comes from Polygon API. Never hardcode prices. Never use Math.random() for prices.
+
+## Key Invariants (Rules That Must Never Break)
+
+1. **Database-IB Sync:** Database updates only AFTER successful IB operations
+2. **Stop Only Ratchets Up:** Stop price can only increase, never decrease
+3. **Real Prices Only:** currentPrice must come from Polygon, never fabricated
+4. **Position Sizing:** Shares = floor(RiskUSD / (Entry - Stop))
+5. **Max Stop Distance:** Reject if stop distance > 6%
+6. **Bounce Confirmation:** Stop only raised after close >= pullbackLow * 1.02
+
+## Buy Qualification Rules
+
+Evaluated in `buy-qualification.service.ts`:
+
+| Rule | Metric | Threshold |
+|------|--------|-----------|
+| Data requirement | Trading days | >= 221 |
+| Trend | SMA200 slope | slope > 0 = Uptrend |
+| Extension | (Close - SMA200) / SMA200 | < 20% |
+| Pullback depth | (RecentHigh - Close) / RecentHigh | 5% - 8% |
+| Bounce | Close vs PullbackLow | Close >= PullbackLow * 1.02 |
+| Regime | Close vs SMA200 | Close > SMA200 |
+| Sharp drops | Days with >3% drop in 63 days | < 3 days |
+| Stop distance | (Entry - Stop) / Entry | <= 6% |
+
+**Formulas:**
+- `ADV45 = sum(volume[last 45 days]) / 45`
+- `SMA200 = sum(close[last 200 days]) / 200`
+- `RecentHigh = max(close[last 63 days])`
+- `PullbackLow = min(low[from RecentHighDate to today])`
+- `StopPrice = PullbackLow * (1 - 0.007)`
+
+## Position Sizing
+
+From `position-sizing.service.ts`:
+
+```
+RiskUSD = TotalCapital * RiskPerTradePercent
+Shares = floor(RiskUSD / (Entry - Stop))
+PositionUSD = Shares * Entry
+```
+
+**Default Config:**
+- TotalCapital: $1,000,000
+- RiskPerTradePercent: 0.15% ($1,500 per trade)
+- MaxCapitalDeployed: 25%
+- StopBuffer: 0.7% below pullback low
+- MinStopDistance: 2%
+- MaxStopDistance: 6%
+
+## Structure-Based Trailing Stop
+
+From `trailing-stop.service.ts`:
+
+**Logic:**
+1. Track structural high (highest close since entry)
+2. Track structural low (lowest low since structural high)
+3. When price makes new high, reset structural low tracking
+4. When bounce confirmed (close >= structuralLow * 1.02):
+   - Calculate potentialStop = structuralLow * (1 - 0.007)
+   - If potentialStop > currentStop, raise stop
+5. Stop NEVER moves down
+
+**Key:** Stop only moves up when a HIGHER low forms and bounce is confirmed.
+
+## Module Reference
+
+| Module | Responsibility |
+|--------|----------------|
+| `scanner` | Scan watchlist, create opportunities |
+| `positions` | CRUD for positions, live price refresh |
+| `safety` | Circuit breaker, loss limits, pause trading |
+| `strategy` | Buy qualification, scoring, trailing stops |
+| `risk` | Position sizing calculations |
+| `ib` | IB Gateway communication via proxy |
+| `simulation` | Backtest trades with historical data |
+| `data` | Polygon and Finnhub API clients |
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /scanner/opportunities | List pending opportunities |
+| POST | /scanner/scan | Trigger manual scan |
+| POST | /scanner/opportunities/:id/approve | Approve opportunity |
+| GET | /positions | List open positions (with live prices) |
+| POST | /positions/:id/close | Close position |
+| GET | /safety/status | Dashboard status + limits |
+| POST | /safety/pause | Pause trading |
+| POST | /simulation/run | Run backtest simulation |
+
+## Common Pitfalls (Things I've Gotten Wrong)
+
+1. **Fake price fluctuation:** Never add Math.random() to prices
+2. **Hardcoded fallbacks:** Don't return placeholder prices (like `return 100`)
+3. **DB before IB:** Don't save position before IB order succeeds
+4. **Lowering stops:** Never allow stop to decrease
+5. **Simulating when disconnected:** Don't fall back to simulation on IB errors
+6. **Stale prices:** Always fetch fresh prices for positions
+
+## File Locations
+
+- Buy qualification: `apps/api/src/strategy/buy-qualification.service.ts`
+- Position sizing: `apps/api/src/risk/position-sizing.service.ts`
+- Trailing stop: `apps/api/src/strategy/trailing-stop.service.ts`
+- Scanner: `apps/api/src/scanner/scanner.service.ts`
+- Positions: `apps/api/src/positions/positions.service.ts`
+- IB Service: `apps/api/src/ib/ib.service.ts`
+- IB Proxy: `ib-proxy/proxy.py`
+```
+
+**Step 2: Verify the file was created**
+
+Run: `cat docs/AI-REFERENCE.md | head -50`
+Expected: First 50 lines of the document
+
+**Step 3: Commit**
+
+```bash
+git add docs/AI-REFERENCE.md
+git commit -m "docs: add AI reference document for Claude
+
+Comprehensive technical reference to prevent hallucinations and bugs.
+Covers data sources, invariants, trading rules, and common pitfalls.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 2: Add Docs Navigation to Dashboard Sidebar
+
+**Files:**
+- Modify: `apps/web/src/app/dashboard/layout.tsx:9-19`
+
+**Step 1: Add Docs to navigation items**
+
+Find the `navItems` array and add Docs entry:
+
+```typescript
+const navItems = [
+  { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+  { href: '/dashboard/opportunities', label: 'Opportunities', icon: '🎯' },
+  { href: '/dashboard/positions', label: 'Positions', icon: '📈' },
+  { href: '/dashboard/pnl', label: 'P&L', icon: '💰' },
+  { href: '/dashboard/watchlist', label: 'Watchlist', icon: '👁' },
+  { href: '/dashboard/docs', label: 'Docs', icon: '📖' },
+];
+```
+
+**Step 2: Verify navigation renders**
+
+Run: `cd apps/web && npm run build`
+Expected: Build succeeds (docs page doesn't exist yet, but nav item should compile)
+
+**Step 3: Commit**
+
+```bash
+git add apps/web/src/app/dashboard/layout.tsx
+git commit -m "feat(web): add Docs to dashboard navigation
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 3: Create Documentation Content Data File
+
+**Files:**
+- Create: `apps/web/src/app/dashboard/docs/content.ts`
+
+**Step 1: Create the documentation content file**
+
+```typescript
 export interface DocSection {
   id: string;
   title: string;
@@ -191,10 +420,6 @@ Each card shows:
 | Pullback | How far price has dropped from recent high |
 | Stop Distance | How far the stop is from entry |
 
-**Special Badges:**
-- **OPEN** (yellow): You already have an open position in this stock
-- **APPROVED** (green): This opportunity has been approved
-
 ## Qualification Metrics
 
 Click an opportunity to see detailed metrics:
@@ -243,10 +468,10 @@ The Positions page shows all open trades.
 
 ## Position Details
 
-Click a position to open the detail drawer showing:
-- **Price Chart**: Candlestick chart from entry date to today with entry price (blue) and stop price (red) lines
-- **Key Metrics**: Entry, current price, stop, and P&L
-- **Activity Timeline**: Stop raises, entry, and other events
+Click a position to see:
+- Entry date and price
+- Stop price history
+- Activity timeline (stop raises, etc.)
 
 ## Closing Positions
 
@@ -742,8 +967,7 @@ All endpoints except /auth/login require JWT authentication.
 | GET | /positions/all | List all positions (inc. closed) |
 | GET | /positions/:id | Get single position |
 | GET | /positions/:id/activity | Get position activity log |
-| GET | /positions/:id/chart | Get price chart data (OHLC bars) |
-| POST | /positions/:id/close | Close position (fetches live price first) |
+| POST | /positions/:id/close | Close position |
 | PUT | /positions/:id/trail | Update trail percent |
 
 ## Safety
@@ -1015,3 +1239,229 @@ export function getAllSections(): Array<DocSection & { categoryId: string; categ
     }))
   );
 }
+```
+
+**Step 2: Verify TypeScript compiles**
+
+Run: `cd apps/web && npx tsc --noEmit`
+Expected: No errors
+
+**Step 3: Commit**
+
+```bash
+git add apps/web/src/app/dashboard/docs/content.ts
+git commit -m "feat(web): add documentation content data
+
+Comprehensive docs covering:
+- Getting started guide
+- User guide for all features
+- Trading logic explanation
+- Technical reference
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 4: Create Documentation Page Component
+
+**Files:**
+- Create: `apps/web/src/app/dashboard/docs/page.tsx`
+
+**Step 1: Create the docs page component**
+
+```tsx
+'use client';
+
+import { useState } from 'react';
+import { documentationContent, DocCategory, DocSection } from './content';
+
+// Simple markdown renderer (no external library)
+function renderMarkdown(content: string): string {
+  return content
+    // Headers
+    .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-white mt-6 mb-2">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold text-white mt-8 mb-3">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-white mb-4">$1</h1>')
+    // Code blocks
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-800 p-4 rounded-lg overflow-x-auto my-4 text-sm"><code class="text-green-400">$2</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1.5 py-0.5 rounded text-green-400 text-sm">$1</code>')
+    // Bold
+    .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+    // Tables
+    .replace(/\|(.+)\|/g, (match) => {
+      const cells = match.split('|').filter(c => c.trim());
+      const isHeader = match.includes('---');
+      if (isHeader) return '';
+      return `<tr>${cells.map(c => `<td class="border border-gray-700 px-3 py-2">${c.trim()}</td>`).join('')}</tr>`;
+    })
+    // Lists
+    .replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-300">• $1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 text-gray-300 list-decimal">$1</li>')
+    // Paragraphs (lines that aren't already HTML)
+    .replace(/^(?!<)(.+)$/gm, (match) => {
+      if (match.startsWith('<') || match.trim() === '') return match;
+      return `<p class="text-gray-300 my-2">${match}</p>`;
+    })
+    // Clean up empty paragraphs
+    .replace(/<p class="text-gray-300 my-2"><\/p>/g, '');
+}
+
+export default function DocsPage() {
+  const [activeCategory, setActiveCategory] = useState<string>(documentationContent[0].id);
+  const [activeSection, setActiveSection] = useState<string>(documentationContent[0].sections[0].id);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
+    new Set([documentationContent[0].id])
+  );
+
+  const toggleCategory = (categoryId: string) => {
+    const newExpanded = new Set(expandedCategories);
+    if (newExpanded.has(categoryId)) {
+      newExpanded.delete(categoryId);
+    } else {
+      newExpanded.add(categoryId);
+    }
+    setExpandedCategories(newExpanded);
+  };
+
+  const selectSection = (categoryId: string, sectionId: string) => {
+    setActiveCategory(categoryId);
+    setActiveSection(sectionId);
+    if (!expandedCategories.has(categoryId)) {
+      setExpandedCategories(new Set([...expandedCategories, categoryId]));
+    }
+  };
+
+  const currentCategory = documentationContent.find(c => c.id === activeCategory);
+  const currentSection = currentCategory?.sections.find(s => s.id === activeSection);
+
+  return (
+    <div className="flex h-[calc(100vh-8rem)] -m-6">
+      {/* Sidebar */}
+      <nav className="w-64 bg-gray-800/50 border-r border-gray-700 overflow-y-auto flex-shrink-0">
+        <div className="p-4">
+          <h2 className="text-lg font-semibold text-white mb-4">Documentation</h2>
+          <ul className="space-y-1">
+            {documentationContent.map((category) => (
+              <li key={category.id}>
+                <button
+                  onClick={() => toggleCategory(category.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg transition-colors ${
+                    activeCategory === category.id
+                      ? 'bg-gray-700 text-white'
+                      : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'
+                  }`}
+                >
+                  <span>{category.icon}</span>
+                  <span className="flex-1">{category.title}</span>
+                  <span className="text-xs">{expandedCategories.has(category.id) ? '▼' : '▶'}</span>
+                </button>
+                {expandedCategories.has(category.id) && (
+                  <ul className="ml-6 mt-1 space-y-1">
+                    {category.sections.map((section) => (
+                      <li key={section.id}>
+                        <button
+                          onClick={() => selectSection(category.id, section.id)}
+                          className={`w-full px-3 py-1.5 text-left text-sm rounded transition-colors ${
+                            activeSection === section.id && activeCategory === category.id
+                              ? 'text-blue-400 bg-blue-500/10'
+                              : 'text-gray-500 hover:text-gray-300'
+                          }`}
+                        >
+                          {section.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </nav>
+
+      {/* Content */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto p-8">
+          {currentSection && (
+            <article
+              className="prose prose-invert max-w-none"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(currentSection.content) }}
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+```
+
+**Step 2: Verify page renders**
+
+Run: `cd apps/web && npm run build`
+Expected: Build succeeds
+
+**Step 3: Commit**
+
+```bash
+git add apps/web/src/app/dashboard/docs/page.tsx
+git commit -m "feat(web): add documentation page with sidebar navigation
+
+- Collapsible category navigation
+- Simple markdown rendering
+- Dark theme styling
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 5: Final Verification
+
+**Step 1: Build both apps**
+
+Run: `npm run build`
+Expected: Both API and Web build successfully
+
+**Step 2: Start the app and verify docs page**
+
+Run: `npm run dev` (in separate terminal)
+Navigate to: http://localhost:3000/dashboard/docs
+Expected: Docs page renders with sidebar and content
+
+**Step 3: Verify AI reference**
+
+Run: `cat docs/AI-REFERENCE.md | wc -l`
+Expected: Output shows line count (should be 150-200 lines)
+
+**Step 4: Final commit (if any changes needed)**
+
+```bash
+git add -A
+git commit -m "docs: complete documentation implementation
+
+- AI reference document for Claude
+- Human docs page in dashboard
+- Full trading logic documentation
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Summary
+
+| Task | Deliverable |
+|------|-------------|
+| 1 | `docs/AI-REFERENCE.md` - AI reference document |
+| 2 | Updated sidebar with Docs nav item |
+| 3 | `docs/content.ts` - All documentation content |
+| 4 | `docs/page.tsx` - Docs page component |
+| 5 | Final verification and commits |

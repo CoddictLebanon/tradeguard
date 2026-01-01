@@ -28,21 +28,6 @@ export class Opportunity extends BaseEntity {
   @Column('decimal', { precision: 10, scale: 2 })
   currentPrice: number;
 
-  @Column('text', { nullable: true })
-  aiAnalysis: string;
-
-  @Column('text', { nullable: true })
-  bullCase: string;
-
-  @Column('text', { nullable: true })
-  bearCase: string;
-
-  @Column('decimal', { precision: 5, scale: 2, nullable: true })
-  aiConfidence: number;
-
-  @Column({ nullable: true })
-  aiRecommendation: string; // BUY, HOLD, AVOID
-
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   suggestedEntry: number;
 

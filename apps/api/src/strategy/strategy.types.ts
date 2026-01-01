@@ -2,7 +2,6 @@ export interface ScoringWeights {
   volumeSurge: number;
   technicalBreakout: number;
   sectorMomentum: number;
-  newsSentiment: number;
   volatilityFit: number;
 }
 
@@ -10,7 +9,6 @@ export interface ScoringFactors {
   volumeSurge: number;
   technicalBreakout: number;
   sectorMomentum: number;
-  newsSentiment: number;
   volatilityFit: number;
 }
 
@@ -25,9 +23,8 @@ export interface OpportunityScore {
 }
 
 export const DEFAULT_WEIGHTS: ScoringWeights = {
-  volumeSurge: 25,
-  technicalBreakout: 25,
+  volumeSurge: 30,
+  technicalBreakout: 30,
   sectorMomentum: 20,
-  newsSentiment: 15,
-  volatilityFit: 15,
+  volatilityFit: 20,
 };

@@ -8,27 +8,39 @@ interface ApiOptions {
 
 async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body, token } = options;
-  
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  
+
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
-  
+
+  // Handle 401 Unauthorized - clear auth and redirect to login
+  if (response.status === 401) {
+    // Clear stored auth (works in browser only)
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // Redirect to login page
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired. Please login again.');
+  }
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Request failed' }));
     throw new Error(error.message || `HTTP ${response.status}`);
   }
-  
+
   return response.json();
 }
 
@@ -75,11 +87,6 @@ export const api = {
       score: number;
       factors: Record<string, number | string | boolean>;
       currentPrice: number;
-      aiAnalysis: string | null;
-      bullCase: string | null;
-      bearCase: string | null;
-      aiConfidence: number | null;
-      aiRecommendation: string | null;
       suggestedEntry: number;
       suggestedTrailPercent: number;
       status: string;
@@ -117,7 +124,12 @@ export const api = {
     }),
 
   triggerScan: (token: string, symbols?: string[], asOfDate?: string) =>
-    apiRequest<{ opportunities: unknown[] }>('/scanner/scan', {
+    apiRequest<{
+      opportunities: unknown[];
+      skipped: boolean;
+      scannedCount?: number;
+      message?: string;
+    }>('/scanner/scan', {
       method: 'POST',
       token,
       body: { symbols, asOfDate },
@@ -161,6 +173,15 @@ export const api = {
       positionId: string;
       createdAt: string;
     }>>(`/positions/${id}/activity`, { token }),
+
+  getPositionChart: (token: string, id: string) =>
+    apiRequest<Array<{
+      date: string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+    }>>(`/positions/${id}/chart`, { token }),
 
   updateTrailPercent: (token: string, id: string, trailPercent: number) =>
     apiRequest<{ success: boolean }>(`/positions/${id}/trail`, {
@@ -367,7 +388,7 @@ export const api = {
       const res = await fetch('http://localhost:6680/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port: 7497 }),
+        body: JSON.stringify({ port: 4002 }),
         signal: controller.signal,
       });
       return res.json();

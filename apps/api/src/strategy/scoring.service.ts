@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PolygonService } from '../data/polygon.service';
-import { FinnhubService } from '../data/finnhub.service';
 import { StockQuote, TechnicalIndicators } from '../data/data.types';
 import {
   ScoringWeights,
@@ -14,10 +13,7 @@ export class ScoringService {
   private readonly logger = new Logger(ScoringService.name);
   private weights: ScoringWeights = DEFAULT_WEIGHTS;
 
-  constructor(
-    private readonly polygonService: PolygonService,
-    private readonly finnhubService: FinnhubService,
-  ) {}
+  constructor(private readonly polygonService: PolygonService) {}
 
   setWeights(weights: Partial<ScoringWeights>): void {
     this.weights = { ...this.weights, ...weights };
@@ -25,13 +21,12 @@ export class ScoringService {
 
   async scoreStock(symbol: string): Promise<OpportunityScore> {
     try {
-      const [quote, indicators, sentiment] = await Promise.all([
+      const [quote, indicators] = await Promise.all([
         this.polygonService.getQuote(symbol),
         this.polygonService.getTechnicalIndicators(symbol),
-        this.finnhubService.getNewsSentiment(symbol).catch(() => ({ score: 0.5, buzz: 0 })),
       ]);
 
-      const factors = this.calculateFactors(quote, indicators, sentiment);
+      const factors = this.calculateFactors(quote, indicators);
       const totalScore = this.calculateTotalScore(factors);
 
       // Calculate suggested trail percent based on ATR
@@ -56,7 +51,6 @@ export class ScoringService {
   private calculateFactors(
     quote: StockQuote,
     indicators: TechnicalIndicators,
-    sentiment: { score: number; buzz: number },
   ): ScoringFactors {
     // Volume Surge (0-100)
     let volumeSurge = 0;
@@ -80,13 +74,10 @@ export class ScoringService {
     if (indicators.rsi > 50 && indicators.rsi < 70) technicalBreakout += 30;
     else if (indicators.rsi >= 70) technicalBreakout += 10; // Overbought warning
 
-    // Sector Momentum (0-100) - simplified, would need sector data
+    // Sector Momentum (0-100) - based on daily price change
     const sectorMomentum = quote.changePercent > 0
       ? Math.min(100, quote.changePercent * 20 + 50)
       : Math.max(0, 50 + quote.changePercent * 10);
-
-    // News Sentiment (0-100)
-    const newsSentiment = sentiment.score * 100;
 
     // Volatility Fit (0-100)
     // Sweet spot: ATR between 2-5% of price
@@ -106,7 +97,6 @@ export class ScoringService {
       volumeSurge: Math.round(volumeSurge),
       technicalBreakout: Math.round(technicalBreakout),
       sectorMomentum: Math.round(sectorMomentum),
-      newsSentiment: Math.round(newsSentiment),
       volatilityFit: Math.round(volatilityFit),
     };
   }
@@ -118,7 +108,6 @@ export class ScoringService {
       (factors.volumeSurge * this.weights.volumeSurge +
         factors.technicalBreakout * this.weights.technicalBreakout +
         factors.sectorMomentum * this.weights.sectorMomentum +
-        factors.newsSentiment * this.weights.newsSentiment +
         factors.volatilityFit * this.weights.volatilityFit) /
       totalWeight;
 

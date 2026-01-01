@@ -79,27 +79,46 @@ export class TradeExecutionService {
       const tradingMode = this.circuitBreaker.getTradingMode();
       this.logger.log(`Placing ${tradingMode.toUpperCase()} order for ${shares} shares of ${opportunity.symbol}`);
 
-      let ibOrderId: number | undefined;
-      let ibStopOrderId: number | undefined;
+      // Place market buy order via IB - MUST succeed before creating position
+      let ibOrderId: number;
+      let ibStopOrderId: number;
 
       try {
-        // Place market buy order
         ibOrderId = await this.ibService.placeBuyOrder(opportunity.symbol, shares);
         this.logger.log(`Buy order placed: ${ibOrderId}`);
+      } catch (orderError) {
+        this.logger.error(`Failed to place IB buy order: ${(orderError as Error).message}`);
+        await this.activityRepo.save({
+          type: ActivityType.TRADE_BLOCKED,
+          message: `Failed to place IB buy order for ${opportunity.symbol}: ${(orderError as Error).message}`,
+          symbol: opportunity.symbol,
+          details: { error: (orderError as Error).message, shares, entryPrice },
+        });
+        return; // Do NOT create position if IB buy order fails
+      }
 
-        // Place trailing stop order
+      // Place trailing stop order via IB - MUST succeed
+      try {
         ibStopOrderId = await this.ibService.placeTrailingStopOrder(
           opportunity.symbol,
           shares,
           trailPercent,
         );
         this.logger.log(`Trailing stop order placed: ${ibStopOrderId}`);
-      } catch (orderError) {
-        this.logger.error(`Failed to place IB order: ${(orderError as Error).message}`);
-        // Continue to create position record even if IB order fails
+      } catch (stopError) {
+        this.logger.error(`Failed to place IB stop order: ${(stopError as Error).message}`);
+        // Stop order failed but buy order succeeded - log warning but continue
+        // The position will be created without a stop order ID
+        await this.activityRepo.save({
+          type: ActivityType.SYSTEM,
+          message: `Warning: Buy order succeeded but stop order failed for ${opportunity.symbol}`,
+          symbol: opportunity.symbol,
+          details: { error: (stopError as Error).message, ibOrderId },
+        });
+        ibStopOrderId = 0; // Mark as no stop order
       }
 
-      // Create the position
+      // Create the position - only reaches here if IB buy order succeeded
       const position = this.positionRepo.create({
         symbol: opportunity.symbol,
         entryPrice,
@@ -110,8 +129,8 @@ export class TradeExecutionService {
         highestPrice: entryPrice,
         status: PositionStatus.OPEN,
         openedAt: new Date(),
-        ibOrderId: ibOrderId?.toString(),
-        ibStopOrderId: ibStopOrderId?.toString(),
+        ibOrderId: ibOrderId.toString(),
+        ibStopOrderId: ibStopOrderId ? ibStopOrderId.toString() : undefined,
       });
 
       await this.positionRepo.save(position);

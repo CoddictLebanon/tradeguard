@@ -47,11 +47,6 @@ interface Opportunity {
   score: number;
   factors: Record<string, number | string | boolean>;
   currentPrice: number;
-  aiAnalysis: string | null;
-  bullCase: string | null;
-  bearCase: string | null;
-  aiConfidence: number | null;
-  aiRecommendation: string | null;
   suggestedEntry: number;
   suggestedTrailPercent: number;
   status: string;
@@ -93,6 +88,7 @@ export default function OpportunitiesPage() {
     notExtended: false,
     minScore: 0,
   });
+  const [openPositionSymbols, setOpenPositionSymbols] = useState<Set<string>>(new Set());
 
   const filteredOpportunities = opportunities.filter((opp) => {
     // ADV must be at least 2M (always enforced)
@@ -147,6 +143,21 @@ export default function OpportunitiesPage() {
     }
   }, [token]);
 
+  // Fetch open positions to show flag on opportunities
+  useEffect(() => {
+    const fetchOpenPositions = async () => {
+      if (!token) return;
+      try {
+        const positions = await api.getPositions(token);
+        const symbols = new Set(positions.map((p) => p.symbol));
+        setOpenPositionSymbols(symbols);
+      } catch {
+        // Ignore errors - non-critical feature
+      }
+    };
+    fetchOpenPositions();
+  }, [token]);
+
   const handleScan = async () => {
     if (!token) return;
     setScanning(true);
@@ -155,11 +166,24 @@ export default function OpportunitiesPage() {
     setSelected(null); // Clear selection
     try {
       const asOfDate = simulationConfig?.enabled ? simulationConfig.date || undefined : undefined;
-      await api.triggerScan(token, undefined, asOfDate);
+      // triggerScan returns scan results with status
+      const result = await api.triggerScan(token, undefined, asOfDate);
+      // Fetch all opportunities (includes approved ones)
       const data = await api.getOpportunities(token);
       setOpportunities(data);
       const dateMsg = asOfDate ? ` for ${asOfDate}` : '';
-      setScanMessage(data.length === 0 ? `Scan complete${dateMsg}. No stocks found.` : `Found ${data.length} opportunities${dateMsg}`);
+      // Show appropriate message based on scan result
+      if (result.skipped) {
+        setScanMessage('Scan already in progress. Please wait and try again.');
+      } else if (result.message) {
+        setScanMessage(result.message);
+      } else {
+        const foundCount = result.opportunities?.length || 0;
+        const totalScanned = result.scannedCount || 0;
+        setScanMessage(foundCount === 0
+          ? `Scanned ${totalScanned} stocks${dateMsg}. No qualified opportunities found.`
+          : `Scanned ${totalScanned} stocks${dateMsg}. Found ${foundCount} qualified opportunities.`);
+      }
       setTimeout(() => setScanMessage(null), 10000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Scan failed');
@@ -431,6 +455,9 @@ export default function OpportunitiesPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-bold text-white">{opp.symbol}</span>
                         <span className="text-gray-400 text-sm">${fmt(opp.currentPrice)}</span>
+                        {openPositionSymbols.has(opp.symbol) && (
+                          <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded border border-yellow-500/30">OPEN</span>
+                        )}
                         {opp.status === 'APPROVED' && (
                           <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">APPROVED</span>
                         )}
@@ -482,6 +509,11 @@ export default function OpportunitiesPage() {
                   <div className="text-lg font-mono text-white mt-1">${fmt(selected.currentPrice)}</div>
                 </div>
               </div>
+              {openPositionSymbols.has(selected.symbol) && (
+                <div className="mt-2 bg-yellow-500/10 border border-yellow-500/30 rounded px-3 py-2 flex items-center gap-2">
+                  <span className="text-yellow-400 text-sm font-medium">Already an open position</span>
+                </div>
+              )}
             </div>
 
             {/* Compact Metrics Grid */}
@@ -577,32 +609,6 @@ export default function OpportunitiesPage() {
                 </div>
               </div>
             </div>
-
-            {/* AI Analysis */}
-            {selected.aiAnalysis && (
-              <div className="bg-gray-700/50 p-2 rounded">
-                <div className="text-xs text-gray-500 mb-1">AI Analysis</div>
-                <div className="text-xs text-white">{selected.aiAnalysis}</div>
-              </div>
-            )}
-
-            {/* Bull/Bear Cases */}
-            {(selected.bullCase || selected.bearCase) && (
-              <div className="grid grid-cols-2 gap-2">
-                {selected.bullCase && (
-                  <div className="bg-green-500/10 border border-green-500/30 p-2 rounded">
-                    <div className="text-xs text-green-500 mb-1">Bull</div>
-                    <div className="text-xs text-gray-300">{selected.bullCase}</div>
-                  </div>
-                )}
-                {selected.bearCase && (
-                  <div className="bg-red-500/10 border border-red-500/30 p-2 rounded">
-                    <div className="text-xs text-red-500 mb-1">Bear</div>
-                    <div className="text-xs text-gray-300">{selected.bearCase}</div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Actions */}
             {selected.status === 'APPROVED' ? (

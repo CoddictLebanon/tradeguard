@@ -1,7 +1,7 @@
 # TradeGuard AI Reference
 
 > This document is for Claude to read at the start of conversations to understand the system accurately.
-> Last updated: 2026-01-01
+> Last updated: 2026-01-01 (Session 2)
 
 ## System Overview
 
@@ -115,7 +115,9 @@ From `trailing-stop.service.ts`:
 | POST | /scanner/scan | Trigger manual scan |
 | POST | /scanner/opportunities/:id/approve | Approve opportunity |
 | GET | /positions | List open positions (with live prices) |
-| POST | /positions/:id/close | Close position |
+| GET | /positions/:id/chart | Get position price chart data |
+| GET | /positions/:id/activity | Get position activity timeline |
+| POST | /positions/:id/close | Close position (fetches live exit price) |
 | GET | /safety/status | Dashboard status + limits |
 | POST | /safety/pause | Pause trading |
 | POST | /simulation/run | Run backtest simulation |
@@ -128,6 +130,15 @@ From `trailing-stop.service.ts`:
 4. **Lowering stops:** Never allow stop to decrease
 5. **Simulating when disconnected:** Don't fall back to simulation on IB errors
 6. **Stale prices:** Always fetch fresh prices for positions
+7. **Activity type case:** Database stores lowercase (e.g., `position_closed`), not `POSITION_CLOSED`
+8. **Exit price on close:** Must fetch live price from Polygon before closing position
+9. **Portal for modals:** Use React Portal to render modals at document.body level for proper z-index
+
+## UI Features
+
+- **Opportunities page:** Shows yellow "OPEN" badge if stock already has an open position
+- **Position drawer:** Shows candlestick price chart from entry date to today
+- **Position drawer:** Uses React Portal to overlay entire viewport including sidebar/header
 
 ## File Locations
 

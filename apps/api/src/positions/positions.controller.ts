@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PositionsService } from './positions.service';
 import { ActivityLog } from '../entities/activity-log.entity';
+import { PolygonService } from '../data/polygon.service';
 
 @Controller('positions')
 @UseGuards(JwtAuthGuard)
@@ -12,6 +13,7 @@ export class PositionsController {
     private readonly positionsService: PositionsService,
     @InjectRepository(ActivityLog)
     private readonly activityRepo: Repository<ActivityLog>,
+    private readonly polygonService: PolygonService,
   ) {}
 
   @Get()
@@ -40,6 +42,37 @@ export class PositionsController {
       where: { positionId: id },
       order: { createdAt: 'ASC' },
     });
+  }
+
+  @Get(':id/chart')
+  async getPositionChart(@Param('id') id: string) {
+    const position = await this.positionsService.findById(id);
+    if (!position) {
+      return [];
+    }
+
+    // Get bars from position open date to today
+    const fromDate = new Date(position.openedAt);
+    const toDate = new Date();
+
+    // Format dates as YYYY-MM-DD
+    const from = fromDate.toISOString().split('T')[0];
+    const to = toDate.toISOString().split('T')[0];
+
+    try {
+      const bars = await this.polygonService.getBarsForDateRange(position.symbol, from, to);
+      return bars.map((bar) => ({
+        date: bar.timestamp instanceof Date
+          ? bar.timestamp.toISOString().split('T')[0]
+          : new Date(bar.timestamp).toISOString().split('T')[0],
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   @Post(':id/close')

@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { IBService } from './ib.service';
+import { IBProxyManagerService } from './ib-proxy-manager.service';
 import { PlaceBuyOrderDto, PlaceSellOrderDto, ModifyStopDto } from './dto/place-order.dto';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../entities/user.entity';
@@ -19,6 +20,7 @@ import { OrderValidationService } from '../safety/order-validation.service';
 export class IBController {
   constructor(
     private readonly ibService: IBService,
+    private readonly proxyManager: IBProxyManagerService,
     private readonly orderValidation: OrderValidationService,
   ) {}
 
@@ -28,7 +30,20 @@ export class IBController {
       connected: this.ibService.isConnected(),
       status: this.ibService.getConnectionStatus(),
       tradingMode: this.ibService.getTradingMode(),
+      proxy: this.proxyManager.getStatus(),
     };
+  }
+
+  @Get('proxy/status')
+  getProxyStatus() {
+    return this.proxyManager.getStatus();
+  }
+
+  @Post('proxy/restart')
+  @Roles(UserRole.ADMIN)
+  async restartProxy() {
+    await this.proxyManager.restart();
+    return { message: 'Proxy restart initiated', status: this.proxyManager.getStatus() };
   }
 
   private requireConnection(): void {

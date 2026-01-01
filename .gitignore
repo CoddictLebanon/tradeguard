@@ -35,3 +35,4 @@ debug-*
 
 # Database
 *.sqlite
+*.swp

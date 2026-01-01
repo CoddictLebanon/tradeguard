@@ -60,23 +60,10 @@ export default function PositionsPage() {
 
   useEffect(() => {
     fetchPositions();
-    const interval = setInterval(fetchPositions, 10000);
+    // Refresh positions every 30 seconds (real data only)
+    const interval = setInterval(fetchPositions, 30000);
     return () => clearInterval(interval);
   }, [token]);
-
-  useEffect(() => {
-    if (positions.length === 0) return;
-    const fluctuateInterval = setInterval(() => {
-      setPositions(prev => prev.map(pos => {
-        const fluctuation = 1 + (Math.random() - 0.5) * 0.003;
-        const newPrice = pos.currentPrice * fluctuation;
-        const unrealizedPnl = (newPrice - Number(pos.entryPrice)) * pos.shares;
-        const unrealizedPnlPercent = ((newPrice - Number(pos.entryPrice)) / Number(pos.entryPrice)) * 100;
-        return { ...pos, currentPrice: newPrice, unrealizedPnl, unrealizedPnlPercent };
-      }));
-    }, 1000);
-    return () => clearInterval(fluctuateInterval);
-  }, [positions.length]);
 
   const handleClose = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();

@@ -6,7 +6,6 @@ import { DatabaseModule } from './database/database.module';
 import { IBModule } from './ib/ib.module';
 import { DataModule } from './data/data.module';
 import { StrategyModule } from './strategy/strategy.module';
-import { AIModule } from './ai/ai.module';
 import { ScannerModule } from './scanner/scanner.module';
 import { SafetyModule } from './safety/safety.module';
 import { AuthModule } from './auth/auth.module';
@@ -35,7 +34,6 @@ import { SimulationModule } from './simulation/simulation.module';
     EventsModule,
     RiskModule,
     StrategyModule,
-    AIModule,
     ScannerModule,
     SafetyModule,
     LoggingModule,

@@ -6,6 +6,7 @@ import { Position, PositionStatus } from '../entities/position.entity';
 import { PolygonService } from '../data/polygon.service';
 import { StockBar } from '../data/data.types';
 import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
+import { IBService } from '../ib/ib.service';
 import {
   TrailingStopConfig,
   DEFAULT_TRAILING_STOP_CONFIG,
@@ -45,6 +46,7 @@ export class TrailingStopService {
     @InjectRepository(ActivityLog)
     private activityRepo: Repository<ActivityLog>,
     private readonly polygonService: PolygonService,
+    private readonly ibService: IBService,
   ) {}
 
   /**
@@ -179,7 +181,38 @@ export class TrailingStopService {
       );
 
       if (analysis.shouldUpdateStop && analysis.newStopPrice) {
-        // Update position
+        // FIRST: Update stop in IB Gateway if position has an IB stop order
+        if (position.ibStopOrderId) {
+          try {
+            const ibResult = await this.ibService.modifyStopPrice(
+              parseInt(position.ibStopOrderId, 10),
+              position.symbol,
+              position.shares,
+              currentStop,
+              analysis.newStopPrice,
+            );
+
+            if (!ibResult.success) {
+              this.logger.warn(
+                `${position.symbol}: IB stop modification failed: ${ibResult.reason}`,
+              );
+              // Don't update database if IB update failed
+              return null;
+            }
+
+            this.logger.log(
+              `${position.symbol}: IB stop updated successfully`,
+            );
+          } catch (ibError) {
+            this.logger.error(
+              `${position.symbol}: Failed to update IB stop: ${(ibError as Error).message}`,
+            );
+            // Don't update database if IB update failed
+            return null;
+          }
+        }
+
+        // THEN: Update position in database (only after IB success)
         await this.positionRepo.update(position.id, {
           stopPrice: analysis.newStopPrice,
           structuralHigh: analysis.currentHigh,

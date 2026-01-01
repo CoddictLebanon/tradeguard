@@ -89,17 +89,27 @@ export default function PnLPage() {
       });
 
       const closedTrades = activityData
-        .filter((a: { type: string }) => a.type === 'POSITION_CLOSED')
-        .map((a: { details: Record<string, unknown>; createdAt: string }) => ({
-          id: String(a.details.id || ''),
-          symbol: String(a.details.symbol || ''),
-          entryPrice: Number(a.details.entryPrice) || 0,
-          exitPrice: Number(a.details.exitPrice) || 0,
-          shares: Number(a.details.shares) || 0,
-          pnl: Number(a.details.pnl) || 0,
-          pnlPercent: Number(a.details.pnlPercent) || 0,
-          closedAt: a.createdAt,
-        }));
+        .filter((a: { type: string }) => a.type === 'position_closed')
+        .map((a: { details: Record<string, unknown>; createdAt: string; symbol?: string }) => {
+          const shares = Number(a.details.shares) || 0;
+          const entryPrice = Number(a.details.entryPrice) || 0;
+          const exitPrice = Number(a.details.exitPrice) || 0;
+          // Calculate P&L if not provided (for older activity logs)
+          const entryValue = shares * entryPrice;
+          const exitValue = shares * exitPrice;
+          const calculatedPnl = exitValue - entryValue;
+          const calculatedPnlPercent = entryValue > 0 ? (calculatedPnl / entryValue) * 100 : 0;
+          return {
+            id: String(a.details.id || ''),
+            symbol: String(a.details.symbol || a.symbol || ''),
+            entryPrice,
+            exitPrice,
+            shares,
+            pnl: Number(a.details.pnl) || calculatedPnl,
+            pnlPercent: Number(a.details.pnlPercent) || calculatedPnlPercent,
+            closedAt: a.createdAt,
+          };
+        });
       setTrades(closedTrades);
       setSimStats(simulationStats);
       setSimTrades(simulationHistory);

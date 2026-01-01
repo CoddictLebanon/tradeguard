@@ -43,8 +43,13 @@ export class ScannerController {
   @Post('scan')
   async triggerScan(@Body() body: { symbols?: string[]; asOfDate?: string }) {
     validateAsOfDate(body.asOfDate);
-    const opportunities = await this.scannerService.manualScan(body.symbols, body.asOfDate);
-    return { opportunities };
+    const result = await this.scannerService.manualScan(body.symbols, body.asOfDate);
+    return {
+      opportunities: result.opportunities,
+      skipped: result.skipped,
+      scannedCount: result.scannedCount,
+      message: result.message,
+    };
   }
 
   @Post('opportunities/:id/approve')

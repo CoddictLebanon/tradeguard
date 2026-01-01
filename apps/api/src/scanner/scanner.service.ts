@@ -6,7 +6,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WatchlistItem } from '../entities/watchlist.entity';
 import { Opportunity, OpportunityStatus } from '../entities/opportunity.entity';
 import { BuyQualificationService, QualificationResult } from '../strategy/buy-qualification.service';
-import { AIService } from '../ai/ai.service';
 import { PolygonService } from '../data/polygon.service';
 
 @Injectable()
@@ -15,6 +14,9 @@ export class ScannerService {
   private isScanning = false;
   private scanStartTime: number | null = null;
   private readonly SCAN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max
+  // Cache for ticker details (company name, logo) - these rarely change
+  private tickerDetailsCache = new Map<string, { name?: string; logo_url?: string; icon_url?: string; cachedAt: number }>();
+  private readonly CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 2 weeks
 
   constructor(
     @InjectRepository(WatchlistItem)
@@ -22,7 +24,6 @@ export class ScannerService {
     @InjectRepository(Opportunity)
     private opportunityRepo: Repository<Opportunity>,
     private readonly buyQualificationService: BuyQualificationService,
-    private readonly aiService: AIService,
     private readonly polygonService: PolygonService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
@@ -44,7 +45,7 @@ export class ScannerService {
     await this.scanWatchlist();
   }
 
-  async scanWatchlist(asOfDate?: string): Promise<Opportunity[]> {
+  async scanWatchlist(asOfDate?: string): Promise<{ skipped: boolean; opportunities: Opportunity[]; scannedCount?: number; message?: string }> {
     // Check if previous scan is stuck (timed out)
     if (this.isScanning && this.scanStartTime) {
       const elapsed = Date.now() - this.scanStartTime;
@@ -57,7 +58,7 @@ export class ScannerService {
 
     if (this.isScanning) {
       this.logger.warn('Scan already in progress, skipping');
-      return [];
+      return { skipped: true, opportunities: [] };
     }
 
     this.isScanning = true;
@@ -73,7 +74,7 @@ export class ScannerService {
 
       if (watchlist.length === 0) {
         this.logger.log('No items in watchlist');
-        return [];
+        return { skipped: false, opportunities: [], message: 'Watchlist is empty' };
       }
 
       const symbols = watchlist.map((item) => item.symbol);
@@ -107,75 +108,98 @@ export class ScannerService {
         this.logger.debug(`${f.symbol} failed: ${f.error}`);
       }
 
-      const opportunities: Opportunity[] = [];
-
       // Clear all existing pending opportunities to get fresh results each scan
       await this.opportunityRepo.delete({ status: OpportunityStatus.PENDING });
 
+      // Fetch ticker details - use cache when available
+      const tickerDetailsMap = new Map<string, { name?: string; logo_url?: string; icon_url?: string }>();
+      const now = Date.now();
+
+      // Check cache first, collect symbols that need fetching
+      const symbolsToFetch: string[] = [];
       for (const result of filteredResults) {
+        const cached = this.tickerDetailsCache.get(result.symbol);
+        if (cached && (now - cached.cachedAt) < this.CACHE_TTL_MS) {
+          tickerDetailsMap.set(result.symbol, cached);
+        } else {
+          symbolsToFetch.push(result.symbol);
+        }
+      }
+
+      this.logger.log(`Ticker details: ${filteredResults.length - symbolsToFetch.length} cached, ${symbolsToFetch.length} to fetch`);
+
+      // Fetch missing ticker details in parallel batches
+      const BATCH_SIZE = 20;
+      for (let i = 0; i < symbolsToFetch.length; i += BATCH_SIZE) {
+        const batch = symbolsToFetch.slice(i, i + BATCH_SIZE);
+        const detailPromises = batch.map(async (symbol) => {
+          try {
+            const details = await this.polygonService.getTickerDetails(symbol);
+            return { symbol, details };
+          } catch {
+            return { symbol, details: null };
+          }
+        });
+        const batchResults = await Promise.all(detailPromises);
+        for (const { symbol, details } of batchResults) {
+          if (details) {
+            // Cache the result
+            this.tickerDetailsCache.set(symbol, { ...details, cachedAt: now });
+            tickerDetailsMap.set(symbol, details);
+          }
+        }
+      }
+
+      // Create all opportunity entities
+      const opportunityEntities = filteredResults.map(result => {
         const metrics = result.metrics!;
 
         // Store all metrics in factors as numbers/strings for JSON
         const factors: Record<string, number | string | boolean> = {
-          // 1) Liquidity
           adv45: metrics.adv45,
-          // 2) SMA200
           sma200: metrics.sma200,
-          // 3) Trend
           sma200_20daysAgo: metrics.sma200_20daysAgo,
           slope: metrics.slope,
           trendState: metrics.trendState,
-          // 4) Extended percentage
           extPct: metrics.extPct,
-          // 5) Recent high
           recentHigh: metrics.recentHigh,
           recentHighDate: metrics.recentHighDate,
-          // 6) Pullback
           pullback: metrics.pullback,
           pullbackInRange: metrics.pullbackInRange,
-          // 7) Pullback low
           pullbackLow: metrics.pullbackLow,
-          // 8) Bounce
           bounceOk: metrics.bounceOk,
-          // 9) Regime gate
           aboveSma200: metrics.aboveSma200,
-          // 10) Not extended
           notExtended: metrics.notExtended,
-          // 11) Sharp drop
           noSharpDrop: metrics.noSharpDrop,
           sharpDropCount: metrics.sharpDropCount,
           worstDrop: metrics.worstDrop,
         };
 
-        // Get company name and logo
+        // Get company name and logo from pre-fetched map
+        const tickerDetails = tickerDetailsMap.get(result.symbol);
         let companyName: string | undefined;
         let logoUrl: string | undefined;
-        try {
-          const tickerDetails = await this.polygonService.getTickerDetails(result.symbol);
-          companyName = tickerDetails?.name;
-          // Polygon logo URLs need the API key appended
-          if (tickerDetails?.logo_url) {
+        if (tickerDetails) {
+          companyName = tickerDetails.name;
+          if (tickerDetails.logo_url) {
             logoUrl = `${tickerDetails.logo_url}?apiKey=${process.env.POLYGON_API_KEY}`;
-          } else if (tickerDetails?.icon_url) {
+          } else if (tickerDetails.icon_url) {
             logoUrl = `${tickerDetails.icon_url}?apiKey=${process.env.POLYGON_API_KEY}`;
           }
-        } catch {
-          // Ignore errors fetching company name
         }
 
-        // Calculate score based on pullback quality (5-8% is ideal range)
+        // Calculate score
         const pullbackPct = metrics.pullback * 100;
-        let score = 50; // Base score
+        let score = 50;
         if (metrics.pullbackInRange) score += 20;
         if (metrics.bounceOk) score += 15;
         if (metrics.aboveSma200) score += 10;
         if (metrics.notExtended) score += 5;
         if (metrics.trendState === 'Uptrend') score += 10;
 
-        // Calculate suggested trail percent
         const suggestedTrailPercent = Math.max(5, Math.min(12, pullbackPct * 1.5));
 
-        const opportunity = this.opportunityRepo.create({
+        return this.opportunityRepo.create({
           symbol: result.symbol,
           companyName,
           logoUrl,
@@ -185,24 +209,27 @@ export class ScannerService {
           suggestedEntry: metrics.close,
           suggestedTrailPercent,
           status: OpportunityStatus.PENDING,
-          expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000), // 4 hours
+          expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000),
         } as Partial<Opportunity>);
+      });
 
-        await this.opportunityRepo.save(opportunity);
-        opportunities.push(opportunity);
+      // Batch save all opportunities at once
+      const opportunities = await this.opportunityRepo.save(opportunityEntities);
 
+      // Emit events
+      for (const opportunity of opportunities) {
         this.eventEmitter.emit('opportunity.created', opportunity);
       }
 
       this.logger.log(`Scan complete: ${opportunities.length} opportunities found`);
-      return opportunities;
+      return { skipped: false, opportunities, scannedCount: symbols.length };
     } finally {
       this.isScanning = false;
       this.scanStartTime = null;
     }
   }
 
-  async manualScan(symbols?: string[], asOfDate?: string): Promise<Opportunity[]> {
+  async manualScan(symbols?: string[], asOfDate?: string): Promise<{ skipped: boolean; opportunities: Opportunity[]; scannedCount?: number; message?: string }> {
     // If simulation mode (asOfDate provided), clear existing pending opportunities
     // since they were scanned with different (current) data
     if (asOfDate) {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 
@@ -10,6 +11,14 @@ interface Activity {
   message: string;
   details: Record<string, unknown>;
   createdAt: string;
+}
+
+interface DailyBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
 }
 
 interface Position {
@@ -35,10 +44,88 @@ const typeConfig: Record<string, { label: string; color: string; icon: string }>
   order_filled: { label: 'FILLED', color: 'text-yellow-400', icon: '◆' },
 };
 
+function PriceChart({ dailyData, entryPrice, stopPrice }: { dailyData: DailyBar[]; entryPrice: number; stopPrice: number }) {
+  if (!dailyData || dailyData.length === 0) {
+    return <div className="h-48 flex items-center justify-center text-gray-500">No chart data available</div>;
+  }
+
+  const minPrice = Math.min(...dailyData.map(d => d.low), stopPrice, entryPrice);
+  const maxPrice = Math.max(...dailyData.map(d => d.high), entryPrice);
+  const padding = (maxPrice - minPrice) * 0.05;
+  const chartMin = minPrice - padding;
+  const chartMax = maxPrice + padding;
+  const range = chartMax - chartMin || 1;
+
+  const entryY = 100 - ((entryPrice - chartMin) / range) * 100;
+  const stopY = 100 - ((stopPrice - chartMin) / range) * 100;
+
+  return (
+    <div>
+      <svg className="w-full h-48" viewBox={`0 0 ${dailyData.length * 10} 100`} preserveAspectRatio="none">
+        {/* Entry price line */}
+        <line
+          x1="0"
+          y1={entryY}
+          x2={dailyData.length * 10}
+          y2={entryY}
+          stroke="#3b82f6"
+          strokeWidth="1"
+          strokeDasharray="4,2"
+        />
+        {/* Stop price line */}
+        <line
+          x1="0"
+          y1={stopY}
+          x2={dailyData.length * 10}
+          y2={stopY}
+          stroke="#f87171"
+          strokeWidth="1.5"
+          strokeDasharray="4,2"
+        />
+        {/* Price bars */}
+        {dailyData.map((day, idx) => {
+          const x = idx * 10 + 2;
+          const highY = 100 - ((day.high - chartMin) / range) * 100;
+          const lowY = 100 - ((day.low - chartMin) / range) * 100;
+          const openY = 100 - ((day.open - chartMin) / range) * 100;
+          const closeY = 100 - ((day.close - chartMin) / range) * 100;
+          const isUp = day.close >= day.open;
+          const color = isUp ? '#22c55e' : '#ef4444';
+
+          return (
+            <g key={idx}>
+              {/* High-low wick */}
+              <line x1={x + 3} y1={highY} x2={x + 3} y2={lowY} stroke={color} strokeWidth="1" />
+              {/* Open-close body */}
+              <rect
+                x={x}
+                y={Math.min(openY, closeY)}
+                width="6"
+                height={Math.max(Math.abs(closeY - openY), 1)}
+                fill={color}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex justify-between text-xs text-gray-500 mt-1">
+        <span>{dailyData[0]?.date}</span>
+        <span className="flex items-center gap-3">
+          <span className="text-blue-400">— Entry</span>
+          <span className="text-red-400">— Stop</span>
+        </span>
+        <span>{dailyData[dailyData.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
 export function PositionActivityDrawer({ position, onClose }: Props) {
   const token = useAuthStore((state) => state.token);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [dailyData, setDailyData] = useState<DailyBar[]>([]);
   const [loading, setLoading] = useState(false);
+  const [chartLoading, setChartLoading] = useState(false);
 
   useEffect(() => {
     if (!position || !token) return;
@@ -49,6 +136,14 @@ export function PositionActivityDrawer({ position, onClose }: Props) {
       .then(setActivities)
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    // Fetch price chart data
+    setChartLoading(true);
+    api
+      .getPositionChart(token, position.id)
+      .then(setDailyData)
+      .catch(console.error)
+      .finally(() => setChartLoading(false));
   }, [position, token]);
 
   if (!position) return null;
@@ -59,16 +154,23 @@ export function PositionActivityDrawer({ position, onClose }: Props) {
   const pnl = (currentPrice - entryPrice) * position.shares;
   const pnlPercent = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
 
-  return (
+  // Use portal to render at document body level for proper z-index stacking
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <>
-      {/* Backdrop */}
+      {/* Backdrop - covers entire viewport */}
       <div
-        className="fixed inset-0 bg-black/50 z-40"
+        className="fixed inset-0 bg-black/70"
+        style={{ zIndex: 9998 }}
         onClick={onClose}
       />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 h-full w-96 bg-gray-900 border-l border-gray-700 z-50 overflow-y-auto">
+      <div
+        className="fixed right-0 top-0 h-screen w-[420px] bg-gray-900 border-l border-gray-700 overflow-y-auto"
+        style={{ zIndex: 9999 }}
+      >
         {/* Header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-4">
           <div className="flex items-center justify-between">
@@ -91,6 +193,16 @@ export function PositionActivityDrawer({ position, onClose }: Props) {
               &times;
             </button>
           </div>
+        </div>
+
+        {/* Price Chart */}
+        <div className="p-4 border-b border-gray-800">
+          <h3 className="text-sm font-medium text-gray-400 mb-3">Price Chart</h3>
+          {chartLoading ? (
+            <div className="h-48 flex items-center justify-center text-gray-500">Loading chart...</div>
+          ) : (
+            <PriceChart dailyData={dailyData} entryPrice={entryPrice} stopPrice={stopPrice} />
+          )}
         </div>
 
         {/* Summary */}
@@ -173,6 +285,7 @@ export function PositionActivityDrawer({ position, onClose }: Props) {
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }
