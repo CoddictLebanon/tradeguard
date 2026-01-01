@@ -36,3 +36,6 @@ debug-*
 # Database
 *.sqlite
 *.swp
+
+# Python virtual environment
+ib-proxy/venv/

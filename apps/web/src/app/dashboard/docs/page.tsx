@@ -4,78 +4,177 @@ import { useState } from 'react';
 import { documentationContent, DocCategory, DocSection } from './content';
 
 // Style for inline code/technical terms
-const codeStyle = 'bg-gray-700/50 text-blue-400 px-1.5 py-0.5 rounded text-sm font-mono';
+const codeStyle = 'bg-gray-700/60 text-blue-400 px-1.5 py-0.5 rounded text-sm font-mono border border-gray-600';
 
-// Auto-detect and style technical terms (applied before markdown conversion)
+// Auto-detect and style technical terms
 function styleTechnicalTerms(text: string): string {
-  // Skip if already has backticks (will be handled by markdown)
   if (text.includes('`')) return text;
 
   return text
-    // API paths: /auth/login, /positions/:id, etc.
     .replace(/(?<![`\w])(\/[a-z][a-z0-9\-\/:]*)/gi, '`$1`')
-    // camelCase variables: entryPrice, stopPrice, currentPrice, etc.
     .replace(/\b([a-z]+[A-Z][a-zA-Z0-9]*)\b/g, '`$1`')
-    // Technical abbreviations with numbers: SMA200, SMA50, SMA20, ADV45
     .replace(/\b([A-Z]{2,}\d+)\b/g, '`$1`')
-    // Ports and specific numbers in technical context: port 667, port 4002
     .replace(/port\s+(\d+)/gi, 'port `$1`')
-    // File paths and extensions: .env, proxy.py, etc.
     .replace(/\b(\w+\.(py|ts|tsx|js|json|env|sql))\b/g, '`$1`')
-    // localhost with port
     .replace(/(localhost:\d+)/g, '`$1`')
-    // uuid, varchar, jsonb, decimal, timestamp, enum, int, boolean, text (database types)
     .replace(/\b(uuid|varchar|jsonb|decimal|timestamp|boolean)\b/g, '`$1`');
 }
 
-// Pre-process content to add backticks around technical terms
-function preprocessContent(content: string): string {
-  return content
-    .split('\n')
-    .map(line => {
-      // Skip lines that are headers, code blocks, or already processed
-      if (line.startsWith('#') || line.startsWith('```') || line.startsWith('|')) {
-        return line;
-      }
-      return styleTechnicalTerms(line);
-    })
-    .join('\n');
+// Convert inline markdown (bold, code, etc.)
+function processInlineMarkdown(text: string): string {
+  return text
+    .replace(/`([^`]+)`/g, `<code class="${codeStyle}">$1</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
 }
 
-// Simple markdown renderer (no external library)
-function renderMarkdown(content: string): string {
-  // First preprocess to add backticks around technical terms
-  const processed = preprocessContent(content);
+// Parse and render a markdown table
+function renderTable(lines: string[]): string {
+  const rows = lines.filter(line => line.trim() && !line.includes('---'));
+  if (rows.length === 0) return '';
 
-  return processed
-    // Headers
-    .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-white mt-6 mb-2">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="text-xl font-semibold text-white mt-8 mb-3">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-white mb-4">$1</h1>')
+  const headerRow = rows[0];
+  const bodyRows = rows.slice(1);
+
+  const parseRow = (row: string) => {
+    return row.split('|').filter(c => c.trim()).map(c => c.trim());
+  };
+
+  const headerCells = parseRow(headerRow);
+
+  let html = '<div class="overflow-x-auto my-4"><table class="w-full border-collapse">';
+
+  // Header
+  html += '<thead><tr class="bg-gray-800 border-b border-gray-600">';
+  headerCells.forEach(cell => {
+    const processed = processInlineMarkdown(styleTechnicalTerms(cell));
+    html += `<th class="px-4 py-3 text-left text-sm font-semibold text-gray-200">${processed}</th>`;
+  });
+  html += '</tr></thead>';
+
+  // Body
+  if (bodyRows.length > 0) {
+    html += '<tbody>';
+    bodyRows.forEach((row, idx) => {
+      const cells = parseRow(row);
+      const bgClass = idx % 2 === 0 ? 'bg-gray-800/30' : 'bg-gray-800/50';
+      html += `<tr class="${bgClass} border-b border-gray-700/50 hover:bg-gray-700/30">`;
+      cells.forEach(cell => {
+        const processed = processInlineMarkdown(styleTechnicalTerms(cell));
+        html += `<td class="px-4 py-2.5 text-sm text-gray-300">${processed}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody>';
+  }
+
+  html += '</table></div>';
+  return html;
+}
+
+// Main markdown renderer
+function renderMarkdown(content: string): string {
+  const lines = content.split('\n');
+  let html = '';
+  let i = 0;
+  let inCodeBlock = false;
+  let codeBlockContent = '';
+  let codeBlockLang = '';
+
+  while (i < lines.length) {
+    const line = lines[i];
+
     // Code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-900 border border-gray-700 p-4 rounded-lg overflow-x-auto my-4 text-sm"><code class="text-green-400">$2</code></pre>')
-    // Inline code (backticks) - must come before bold to avoid conflicts
-    .replace(/`([^`]+)`/g, `<code class="${codeStyle}">$1</code>`)
-    // Bold
-    .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
-    // Tables - improved styling
-    .replace(/\|(.+)\|/g, (match) => {
-      const cells = match.split('|').filter(c => c.trim());
-      if (match.includes('---')) return '';
-      return `<tr class="border-b border-gray-700">${cells.map(c => {
-        return `<td class="px-3 py-2 text-gray-300">${c.trim()}</td>`;
-      }).join('')}</tr>`;
-    })
+    if (line.startsWith('```')) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        codeBlockLang = line.slice(3).trim();
+        codeBlockContent = '';
+      } else {
+        html += `<pre class="bg-gray-900 border border-gray-700 p-4 rounded-lg overflow-x-auto my-4 text-sm"><code class="text-green-400">${codeBlockContent}</code></pre>`;
+        inCodeBlock = false;
+      }
+      i++;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeBlockContent += (codeBlockContent ? '\n' : '') + line;
+      i++;
+      continue;
+    }
+
+    // Tables
+    if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      html += renderTable(tableLines);
+      continue;
+    }
+
+    // Headers
+    if (line.startsWith('### ')) {
+      html += `<h3 class="text-lg font-semibold text-white mt-8 mb-3">${processInlineMarkdown(line.slice(4))}</h3>`;
+      i++;
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      html += `<h2 class="text-xl font-bold text-white mt-10 mb-4 pb-2 border-b border-gray-700">${processInlineMarkdown(line.slice(3))}</h2>`;
+      i++;
+      continue;
+    }
+    if (line.startsWith('# ')) {
+      html += `<h1 class="text-2xl font-bold text-white mb-6">${processInlineMarkdown(line.slice(2))}</h1>`;
+      i++;
+      continue;
+    }
+
     // Lists
-    .replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-300">• $1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 text-gray-300 list-decimal">$1</li>')
-    // Paragraphs (lines that aren't already HTML)
-    .replace(/^(?!<)(.+)$/gm, (match) => {
-      if (match.startsWith('<') || match.trim() === '') return match;
-      return `<p class="text-gray-300 my-2">${match}</p>`;
-    })
-    // Clean up empty paragraphs
-    .replace(/<p class="text-gray-300 my-2"><\/p>/g, '');
+    if (line.match(/^- (.+)$/)) {
+      const listItems: string[] = [];
+      while (i < lines.length && lines[i].match(/^- (.+)$/)) {
+        const match = lines[i].match(/^- (.+)$/);
+        if (match) listItems.push(match[1]);
+        i++;
+      }
+      html += '<ul class="my-4 space-y-2">';
+      listItems.forEach(item => {
+        const processed = processInlineMarkdown(styleTechnicalTerms(item));
+        html += `<li class="flex items-start gap-2 text-gray-300"><span class="text-blue-400 mt-1">•</span><span>${processed}</span></li>`;
+      });
+      html += '</ul>';
+      continue;
+    }
+
+    // Numbered lists
+    if (line.match(/^\d+\. (.+)$/)) {
+      const listItems: string[] = [];
+      while (i < lines.length && lines[i].match(/^\d+\. (.+)$/)) {
+        const match = lines[i].match(/^\d+\. (.+)$/);
+        if (match) listItems.push(match[1]);
+        i++;
+      }
+      html += '<ol class="my-4 space-y-2">';
+      listItems.forEach((item, idx) => {
+        const processed = processInlineMarkdown(styleTechnicalTerms(item));
+        html += `<li class="flex items-start gap-3 text-gray-300"><span class="text-blue-400 font-semibold min-w-[1.5rem]">${idx + 1}.</span><span>${processed}</span></li>`;
+      });
+      html += '</ol>';
+      continue;
+    }
+
+    // Paragraphs
+    if (line.trim()) {
+      const processed = processInlineMarkdown(styleTechnicalTerms(line.trim()));
+      html += `<p class="text-gray-300 my-3 leading-relaxed">${processed}</p>`;
+    }
+
+    i++;
+  }
+
+  return html;
 }
 
 export default function DocsPage() {
@@ -153,7 +252,7 @@ export default function DocsPage() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto p-8">
+        <div className="max-w-4xl mx-auto p-8">
           {currentSection && (
             <article
               className="prose prose-invert max-w-none"
