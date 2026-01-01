@@ -17,6 +17,7 @@ import { PositionsModule } from './positions/positions.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { ActivityModule } from './activity/activity.module';
 import { SimulationModule } from './simulation/simulation.module';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { SimulationModule } from './simulation/simulation.module';
     WatchlistModule,
     ActivityModule,
     SimulationModule,
+    TelegramModule,
   ],
   controllers: [],
   providers: [],
