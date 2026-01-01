@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Position, PositionStatus } from '../entities/position.entity';
@@ -21,6 +21,7 @@ export class TradeExecutionService {
     private readonly circuitBreaker: CircuitBreakerService,
     private readonly ibService: IBService,
     private readonly positionSizing: PositionSizingService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   @OnEvent('opportunity.approved')
@@ -151,6 +152,13 @@ export class TradeExecutionService {
           ibOrderId,
           ibStopOrderId,
         },
+      });
+
+      // Emit event for Telegram notifications
+      this.eventEmitter.emit('activity.trade', {
+        type: ActivityType.POSITION_OPENED,
+        symbol: opportunity.symbol,
+        details: { entryPrice, stopPrice, shares },
       });
 
       this.logger.log(

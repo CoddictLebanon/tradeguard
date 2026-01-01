@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { OnEvent, EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Position, PositionStatus } from '../entities/position.entity';
@@ -40,6 +40,7 @@ export class IBEventsService {
     @InjectRepository(ActivityLog)
     private activityRepo: Repository<ActivityLog>,
     private readonly dataSource: DataSource,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   @OnEvent('ib.orderStatus')
@@ -112,6 +113,17 @@ export class IBEventsService {
           stopPrice: entryPosition.stopPrice,
         },
       });
+
+      // Emit event for Telegram notifications
+      this.eventEmitter.emit('activity.trade', {
+        type: ActivityType.POSITION_OPENED,
+        symbol: entryPosition.symbol,
+        details: {
+          entryPrice: event.avgFillPrice,
+          stopPrice: entryPosition.stopPrice,
+          shares: entryPosition.shares,
+        },
+      });
       return;
     }
 
@@ -164,6 +176,13 @@ export class IBEventsService {
         message: `Closed ${position.symbol}: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
         details: { exitPrice, pnl, pnlPercent, exitReason },
       });
+    });
+
+    // Emit event for Telegram notifications (after transaction commits)
+    this.eventEmitter.emit('activity.trade', {
+      type: ActivityType.POSITION_CLOSED,
+      symbol: position.symbol,
+      details: { exitPrice, pnl },
     });
 
     this.logger.log(

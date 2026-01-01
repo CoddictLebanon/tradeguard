@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Position, PositionStatus } from '../entities/position.entity';
 import { IBService } from '../ib/ib.service';
 import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
@@ -17,6 +18,7 @@ export class PositionsService {
     private activityRepo: Repository<ActivityLog>,
     private readonly ibService: IBService,
     private readonly polygonService: PolygonService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async findAll(): Promise<Position[]> {
@@ -162,6 +164,13 @@ export class PositionsService {
           pnlPercent,
           sellOrderId,
         },
+      });
+
+      // Emit event for Telegram notifications
+      this.eventEmitter.emit('activity.trade', {
+        type: ActivityType.POSITION_CLOSED,
+        symbol: position.symbol,
+        details: { exitPrice: position.currentPrice, pnl },
       });
 
       return savedPosition;

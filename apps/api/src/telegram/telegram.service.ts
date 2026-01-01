@@ -117,7 +117,7 @@ export class TelegramService {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = (await response.json()) as { description?: string };
         return { success: false, error: error.description || 'Failed to send message' };
       }
 

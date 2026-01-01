@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Position, PositionStatus } from '../entities/position.entity';
 import { PolygonService } from '../data/polygon.service';
 import { StockBar } from '../data/data.types';
@@ -47,6 +48,7 @@ export class TrailingStopService {
     private activityRepo: Repository<ActivityLog>,
     private readonly polygonService: PolygonService,
     private readonly ibService: IBService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -238,6 +240,13 @@ export class TrailingStopService {
           symbol: position.symbol,
           message: `Stop raised for ${position.symbol}: $${currentStop.toFixed(2)} → $${analysis.newStopPrice.toFixed(2)}`,
           details: update,
+        });
+
+        // Emit event for Telegram notifications
+        this.eventEmitter.emit('activity.trade', {
+          type: ActivityType.TRAILING_STOP_UPDATED,
+          symbol: position.symbol,
+          details: { oldStopPrice: currentStop, newStopPrice: analysis.newStopPrice },
         });
 
         this.logger.log(
