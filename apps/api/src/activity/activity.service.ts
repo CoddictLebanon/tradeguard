@@ -25,12 +25,23 @@ export class ActivityService {
       type: type ? type : In(this.TRADE_EVENT_TYPES),
     };
 
+    // Parse dates - handle both ISO strings and date-only strings
+    const parseStartDate = (d: string) => new Date(d);
+    const parseEndDate = (d: string) => {
+      // If it's a date-only string (YYYY-MM-DD), add end of day
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        return new Date(d + 'T23:59:59.999Z');
+      }
+      // Otherwise use as-is (already full ISO string)
+      return new Date(d);
+    };
+
     if (startDate && endDate) {
-      whereClause.createdAt = Between(new Date(startDate), new Date(endDate + 'T23:59:59.999Z'));
+      whereClause.createdAt = Between(parseStartDate(startDate), parseEndDate(endDate));
     } else if (startDate) {
-      whereClause.createdAt = MoreThanOrEqual(new Date(startDate));
+      whereClause.createdAt = MoreThanOrEqual(parseStartDate(startDate));
     } else if (endDate) {
-      whereClause.createdAt = LessThanOrEqual(new Date(endDate + 'T23:59:59.999Z'));
+      whereClause.createdAt = LessThanOrEqual(parseEndDate(endDate));
     }
 
     if (symbol) {
