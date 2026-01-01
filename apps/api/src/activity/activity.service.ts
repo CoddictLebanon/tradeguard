@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In, Like } from 'typeorm';
+import { Repository, Between, In, LessThanOrEqual, MoreThanOrEqual, FindOptionsWhere } from 'typeorm';
 import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
 import { ActivityFeedQueryDto, ActivityFeedResponse, ActivityFeedItem } from './dto/activity-feed.dto';
 
@@ -21,16 +21,16 @@ export class ActivityService {
   async getFeed(query: ActivityFeedQueryDto): Promise<ActivityFeedResponse> {
     const { startDate, endDate, type, symbol, outcome, limit = 50, offset = 0 } = query;
 
-    const whereClause: any = {
+    const whereClause: FindOptionsWhere<ActivityLog> = {
       type: type ? type : In(this.TRADE_EVENT_TYPES),
     };
 
     if (startDate && endDate) {
       whereClause.createdAt = Between(new Date(startDate), new Date(endDate + 'T23:59:59.999Z'));
     } else if (startDate) {
-      whereClause.createdAt = Between(new Date(startDate), new Date());
+      whereClause.createdAt = MoreThanOrEqual(new Date(startDate));
     } else if (endDate) {
-      whereClause.createdAt = Between(new Date('2020-01-01'), new Date(endDate + 'T23:59:59.999Z'));
+      whereClause.createdAt = LessThanOrEqual(new Date(endDate + 'T23:59:59.999Z'));
     }
 
     if (symbol) {
@@ -75,10 +75,21 @@ export class ActivityService {
       positionId: item.positionId,
     }));
 
+    // After filtering, recalculate for outcome filtering
+    const actualTotal = outcome ? filteredItems.length : total;
+
     return {
       items: feedItems,
-      total,
-      hasMore: offset + limit < total,
+      total: actualTotal,
+      hasMore: outcome ? false : (offset + limit < total), // Can't accurately paginate with post-filter
     };
+  }
+
+  async getRecentLogs(limit: number = 50): Promise<ActivityLog[]> {
+    const take = Math.min(limit, 200);
+    return this.activityRepo.find({
+      order: { createdAt: 'DESC' },
+      take,
+    });
   }
 }
