@@ -1,8 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+
+interface CronLogDetail {
+  positionId: string;
+  symbol: string;
+  action: 'raised' | 'unchanged' | 'failed';
+  oldStopPrice?: number;
+  newStopPrice?: number;
+  error?: string;
+}
+
+interface CronLog {
+  id: string;
+  jobName: string;
+  status: 'running' | 'success' | 'partial' | 'failed';
+  startedAt: string;
+  completedAt: string | null;
+  positionsChecked: number;
+  stopsRaised: number;
+  failures: number;
+  details: CronLogDetail[];
+  errorMessage: string | null;
+}
 
 interface SafetyLimits {
   dailyLossLimitPercent: number;
@@ -89,6 +111,11 @@ export default function SettingsPage() {
   const [telegramTesting, setTelegramTesting] = useState(false);
   const [showBotToken, setShowBotToken] = useState(false);
 
+  // Cron logs state
+  const [cronLogs, setCronLogs] = useState<CronLog[]>([]);
+  const [cronLogsLoading, setCronLogsLoading] = useState(false);
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+
   const fetchSettings = async () => {
     if (!token) {
       setLoading(false);
@@ -119,9 +146,29 @@ export default function SettingsPage() {
     }).catch(() => {});
   };
 
+  const fetchCronLogs = useCallback(async () => {
+    if (!token) return;
+    setCronLogsLoading(true);
+    try {
+      const result = await api.getCronLogs(token);
+      setCronLogs(result.logs);
+    } catch (err) {
+      console.error('Failed to load cron logs:', err);
+    } finally {
+      setCronLogsLoading(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     fetchSettings();
   }, [token]);
+
+  // Fetch cron logs when Notifications tab is active
+  useEffect(() => {
+    if (activeTab === 'notifications') {
+      fetchCronLogs();
+    }
+  }, [activeTab, fetchCronLogs]);
 
   // Clear messages when switching tabs
   useEffect(() => {
@@ -281,6 +328,51 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : 'Failed to update account');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Cron log helper functions
+  const toggleLogExpanded = (logId: string) => {
+    setExpandedLogs(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  };
+
+  const formatLogTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    }) + ', ' + date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'success': return 'text-green-400';
+      case 'partial': return 'text-yellow-400';
+      case 'failed': return 'text-red-400';
+      case 'running': return 'text-blue-400';
+      default: return 'text-gray-400';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'success': return '✓';
+      case 'partial': return '⚠';
+      case 'failed': return '✗';
+      case 'running': return '⟳';
+      default: return '?';
     }
   };
 
@@ -934,6 +1026,93 @@ export default function SettingsPage() {
                   >
                     {saving ? 'Saving...' : 'Save Notification Settings'}
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Cron Job Logs */}
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h3 className="text-lg font-medium text-white mb-4">
+                Trailing Stop Reassessment Logs
+              </h3>
+
+              {cronLogsLoading ? (
+                <div className="flex items-center gap-3 text-gray-400 py-8 justify-center">
+                  <div className="w-5 h-5 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+                  Loading logs...
+                </div>
+              ) : cronLogs.length === 0 ? (
+                <div className="text-gray-400 text-center py-8">
+                  No reassessment logs yet. Logs are created daily at 5 PM ET.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {cronLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="bg-gray-700/50 rounded-lg border border-gray-600/50 overflow-hidden"
+                    >
+                      {/* Header - always visible */}
+                      <button
+                        onClick={() => toggleLogExpanded(log.id)}
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-700/70 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`text-lg ${getStatusColor(log.status)}`}>
+                            {getStatusIcon(log.status)}
+                          </span>
+                          <div className="text-left">
+                            <div className="text-white font-medium">
+                              {formatLogTime(log.startedAt)}
+                            </div>
+                            <div className="text-gray-400 text-sm">
+                              {log.positionsChecked} positions • {log.stopsRaised} raised • {log.failures} failures
+                            </div>
+                          </div>
+                        </div>
+                        <span className="text-gray-400">
+                          {expandedLogs.has(log.id) ? '▼' : '▶'}
+                        </span>
+                      </button>
+
+                      {/* Details - expandable */}
+                      {expandedLogs.has(log.id) && (
+                        <div className="px-4 pb-3 border-t border-gray-600/50">
+                          {log.errorMessage && (
+                            <div className="mt-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                              {log.errorMessage}
+                            </div>
+                          )}
+
+                          {log.details.length > 0 ? (
+                            <div className="mt-3 space-y-2">
+                              {log.details.map((detail, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-center justify-between text-sm py-1"
+                                >
+                                  <span className="text-white font-medium">{detail.symbol}</span>
+                                  {detail.action === 'raised' ? (
+                                    <span className="text-green-400">
+                                      ${detail.oldStopPrice?.toFixed(2)} → ${detail.newStopPrice?.toFixed(2)}
+                                    </span>
+                                  ) : detail.action === 'failed' ? (
+                                    <span className="text-red-400">{detail.error || 'Failed'}</span>
+                                  ) : (
+                                    <span className="text-gray-500">unchanged</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-3 text-gray-500 text-sm">
+                              No positions to reassess
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
