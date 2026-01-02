@@ -18,6 +18,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
 import { ActivityModule } from './activity/activity.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { TelegramModule } from './telegram/telegram.module';
+import { CronLogModule } from './cron-log/cron-log.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { TelegramModule } from './telegram/telegram.module';
     ActivityModule,
     SimulationModule,
     TelegramModule,
+    CronLogModule,
   ],
   controllers: [],
   providers: [],
