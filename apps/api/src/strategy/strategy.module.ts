@@ -14,6 +14,7 @@ import { SafetyModule } from '../safety/safety.module';
 import { IBModule } from '../ib/ib.module';
 import { Position } from '../entities/position.entity';
 import { ActivityLog } from '../entities/activity-log.entity';
+import { CronLogModule } from '../cron-log/cron-log.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ActivityLog } from '../entities/activity-log.entity';
     RiskModule,
     SafetyModule,
     IBModule,
+    CronLogModule,
   ],
   providers: [
     ScoringService,

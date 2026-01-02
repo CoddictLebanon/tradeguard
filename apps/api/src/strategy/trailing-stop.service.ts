@@ -13,6 +13,7 @@ import {
   DEFAULT_TRAILING_STOP_CONFIG,
   DEFAULT_SIMULATION_CONFIG,
 } from '../safety/safety.types';
+import { CronLogService } from '../cron-log/cron-log.service';
 
 export interface StructuralAnalysis {
   currentHigh: number;
@@ -49,6 +50,7 @@ export class TrailingStopService {
     private readonly polygonService: PolygonService,
     private readonly ibService: IBService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cronLogService: CronLogService,
   ) {}
 
   /**
@@ -499,7 +501,72 @@ export class TrailingStopService {
   @Cron('0 17 * * 1-5', { timeZone: 'America/New_York' })
   async dailyReassessment(): Promise<void> {
     this.logger.log('Running daily trailing stop reassessment...');
-    await this.reassessAllPositions();
+
+    const cronLog = await this.cronLogService.createLog('trailing_stop_reassessment');
+
+    try {
+      const openPositions = await this.positionRepo.find({
+        where: { status: PositionStatus.OPEN },
+      });
+
+      if (openPositions.length === 0) {
+        this.logger.log('No open positions to reassess');
+        await this.cronLogService.completeLog(cronLog.id, 'success');
+        return;
+      }
+
+      this.logger.log(`Reassessing ${openPositions.length} open positions...`);
+
+      for (const position of openPositions) {
+        const previousStop = Number(position.stopPrice);
+
+        try {
+          const update = await this.reassessPosition(position);
+
+          if (update) {
+            // Stop was raised
+            await this.cronLogService.addDetail(cronLog.id, {
+              positionId: position.id,
+              symbol: position.symbol,
+              action: 'raised',
+              oldStopPrice: update.previousStop,
+              newStopPrice: update.newStop,
+            });
+          } else {
+            // No update needed
+            await this.cronLogService.addDetail(cronLog.id, {
+              positionId: position.id,
+              symbol: position.symbol,
+              action: 'unchanged',
+              oldStopPrice: previousStop,
+            });
+          }
+        } catch (error) {
+          // Position processing failed
+          await this.cronLogService.addDetail(cronLog.id, {
+            positionId: position.id,
+            symbol: position.symbol,
+            action: 'failed',
+            oldStopPrice: previousStop,
+            error: (error as Error).message,
+          });
+        }
+      }
+
+      // Refetch the log to get updated counts
+      const updatedLog = await this.cronLogService.getLogs('trailing_stop_reassessment', 1);
+      const finalLog = updatedLog[0];
+      const finalStatus = finalLog?.failures > 0 ? 'partial' : 'success';
+
+      await this.cronLogService.completeLog(cronLog.id, finalStatus);
+
+      this.logger.log(
+        `Daily reassessment complete: ${finalLog?.positionsChecked || 0} positions, ${finalLog?.stopsRaised || 0} stops raised, ${finalLog?.failures || 0} failures`,
+      );
+    } catch (error) {
+      this.logger.error(`Daily reassessment failed: ${(error as Error).message}`);
+      await this.cronLogService.completeLog(cronLog.id, 'failed', (error as Error).message);
+    }
   }
 
   /**
