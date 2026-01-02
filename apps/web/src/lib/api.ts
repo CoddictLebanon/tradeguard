@@ -513,4 +513,28 @@ export const api = {
       method: 'POST',
       token,
     }),
+
+  // Cron Logs
+  getCronLogs: (token: string, jobName = 'trailing_stop_reassessment', limit = 50) =>
+    apiRequest<{
+      logs: Array<{
+        id: string;
+        jobName: string;
+        status: 'running' | 'success' | 'partial' | 'failed';
+        startedAt: string;
+        completedAt: string | null;
+        positionsChecked: number;
+        stopsRaised: number;
+        failures: number;
+        details: Array<{
+          positionId: string;
+          symbol: string;
+          action: 'raised' | 'unchanged' | 'failed';
+          oldStopPrice?: number;
+          newStopPrice?: number;
+          error?: string;
+        }>;
+        errorMessage: string | null;
+      }>;
+    }>(`/cron-logs?jobName=${jobName}&limit=${limit}`, { token }),
 };
