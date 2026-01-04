@@ -85,9 +85,19 @@ export class IBController {
   async placeBuyOrder(@Body() dto: PlaceBuyOrderDto) {
     this.requireConnection();
 
+    // Fetch actual portfolio value from IB
+    let portfolioValue = 100000; // Conservative fallback
+    try {
+      const account = await this.ibService.getAccountSummary();
+      if (account?.netLiquidation) {
+        portfolioValue = account.netLiquidation;
+      }
+    } catch {
+      // Use fallback if account fetch fails
+    }
+
     // Validate order before placement
     const price = dto.limitPrice || 100; // Use limit price or estimate
-    const portfolioValue = 1000000; // TODO: Get from account summary
     const validation = await this.orderValidation.validateBuyOrder(
       dto.symbol.toUpperCase(),
       dto.quantity,
@@ -130,9 +140,19 @@ export class IBController {
   async placeSellOrder(@Body() dto: PlaceSellOrderDto) {
     this.requireConnection();
 
+    // Fetch actual portfolio value from IB
+    let portfolioValue = 100000; // Conservative fallback
+    try {
+      const account = await this.ibService.getAccountSummary();
+      if (account?.netLiquidation) {
+        portfolioValue = account.netLiquidation;
+      }
+    } catch {
+      // Use fallback if account fetch fails
+    }
+
     // Validate sell order
     const price = dto.limitPrice || 100;
-    const portfolioValue = 1000000;
     const validation = await this.orderValidation.validateSellOrder(
       dto.symbol.toUpperCase(),
       dto.quantity,

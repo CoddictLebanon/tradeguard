@@ -1,7 +1,7 @@
 // apps/api/src/events/earnings-calendar.service.ts
 
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { FinnhubService } from '../data/finnhub.service';
 
 interface EarningsEvent {
   symbol: string;
@@ -12,42 +12,25 @@ interface EarningsEvent {
 @Injectable()
 export class EarningsCalendarService {
   private readonly logger = new Logger(EarningsCalendarService.name);
-  private readonly finnhubKey: string;
-  private readonly baseUrl = 'https://finnhub.io/api/v1';
 
-  constructor(private readonly configService: ConfigService) {
-    this.finnhubKey = this.configService.get<string>('FINNHUB_API_KEY', '');
-  }
+  constructor(private readonly finnhubService: FinnhubService) {}
 
   async hasEarningsWithinDays(symbol: string, days: number = 5): Promise<{
     hasEarnings: boolean;
     nextEarningsDate?: Date;
     daysUntil?: number;
   }> {
-    if (!this.finnhubKey) {
-      this.logger.warn('FINNHUB_API_KEY not configured, skipping earnings check');
-      return { hasEarnings: false };
-    }
-
     try {
-      const response = await fetch(
-        `${this.baseUrl}/calendar/earnings?symbol=${symbol}&token=${this.finnhubKey}`
-      );
+      const earnings = await this.finnhubService.getEarningsCalendar(symbol);
 
-      if (!response.ok) {
-        throw new Error(`Finnhub API error: ${response.status}`);
-      }
-
-      const data = await response.json() as { earningsCalendar?: Array<{ date: string }> };
-
-      if (!data.earningsCalendar || data.earningsCalendar.length === 0) {
+      if (!earnings || earnings.length === 0) {
         return { hasEarnings: false };
       }
 
       const now = new Date();
       now.setHours(0, 0, 0, 0);
 
-      for (const event of data.earningsCalendar) {
+      for (const event of earnings) {
         const earningsDate = new Date(event.date);
         earningsDate.setHours(0, 0, 0, 0);
 

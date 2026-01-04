@@ -10,9 +10,14 @@ import {
 } from '@nestjs/common';
 import { CircuitBreakerService } from './circuit-breaker.service';
 import { OrderValidationService } from './order-validation.service';
-import { SafetyLimits } from './safety.types';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '../entities/user.entity';
+import {
+  UpdateLimitsDto,
+  PauseResumeDto,
+  UpdateSimulationConfigDto,
+  ValidateOrderDto,
+} from './dto/safety.dto';
 
 @Controller('safety')
 export class SafetyController {
@@ -50,35 +55,35 @@ export class SafetyController {
   @Post('limits')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  async updateLimits(@Body() limits: Partial<SafetyLimits>) {
-    await this.circuitBreaker.updateLimits(limits);
+  async updateLimits(@Body() dto: UpdateLimitsDto) {
+    await this.circuitBreaker.updateLimits(dto);
     return this.circuitBreaker.getLimits();
   }
 
   @Post('pause')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  async pauseTrading(@Body() body: { reason: string }) {
+  async pauseTrading(@Body() dto: PauseResumeDto) {
     const state = this.circuitBreaker.getState();
     if (state.isPaused) {
       throw new BadRequestException('Trading is already paused');
     }
 
-    await this.circuitBreaker.manualPause(body.reason);
-    return { message: `Trading paused: ${body.reason}`, state: this.circuitBreaker.getState() };
+    await this.circuitBreaker.manualPause(dto.reason);
+    return { message: `Trading paused: ${dto.reason}`, state: this.circuitBreaker.getState() };
   }
 
   @Post('resume')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  async resumeTrading(@Body() body: { reason: string }) {
+  async resumeTrading(@Body() dto: PauseResumeDto) {
     const state = this.circuitBreaker.getState();
     if (!state.isPaused) {
       throw new BadRequestException('Trading is not paused');
     }
 
-    await this.circuitBreaker.resumeTrading(body.reason);
-    return { message: `Trading resumed: ${body.reason}`, state: this.circuitBreaker.getState() };
+    await this.circuitBreaker.resumeTrading(dto.reason);
+    return { message: `Trading resumed: ${dto.reason}`, state: this.circuitBreaker.getState() };
   }
 
   @Post('switch-to-live')
@@ -104,17 +109,8 @@ export class SafetyController {
   @Post('validate-order')
   @Roles(UserRole.ADMIN, UserRole.TRADER)
   @HttpCode(HttpStatus.OK)
-  async validateOrder(
-    @Body()
-    body: {
-      symbol: string;
-      quantity: number;
-      price: number;
-      side: 'buy' | 'sell';
-      portfolioValue: number;
-    },
-  ) {
-    return this.orderValidation.validateOrder(body);
+  async validateOrder(@Body() dto: ValidateOrderDto) {
+    return this.orderValidation.validateOrder(dto);
   }
 
   @Post('refresh')
@@ -133,8 +129,8 @@ export class SafetyController {
   @Post('simulation')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
-  async updateSimulationConfig(@Body() body: { enabled?: boolean; date?: string; maxDays?: number }) {
-    await this.circuitBreaker.updateSimulationConfig(body);
+  async updateSimulationConfig(@Body() dto: UpdateSimulationConfigDto) {
+    await this.circuitBreaker.updateSimulationConfig(dto);
     return { success: true, config: await this.circuitBreaker.getSimulationConfig() };
   }
 }

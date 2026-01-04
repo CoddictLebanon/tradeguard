@@ -20,6 +20,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
   private accountId: string;
   private nextOrderId: number = 0;
   private paperOrderId: number = 100000; // Paper trading order IDs start at 100000
+  private readonly proxyApiKey: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -33,6 +34,22 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
       port: this.configService.get<number>('IB_PORT', 7497),
       clientId: this.configService.get<number>('IB_CLIENT_ID', 1),
     };
+    this.proxyApiKey = this.configService.get<string>('IB_PROXY_API_KEY', '');
+  }
+
+  /**
+   * Make a fetch request to the IB proxy with proper headers including API key
+   */
+  private async proxyFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(this.proxyApiKey && { 'X-API-Key': this.proxyApiKey }),
+    };
+
+    return fetch(`http://localhost:6680${endpoint}`, {
+      ...options,
+      headers: { ...headers, ...(options.headers as Record<string, string>) },
+    });
   }
 
   async onModuleInit() {
@@ -226,9 +243,8 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
   ): Promise<number> {
     // Try to place order via Python proxy
     try {
-      const response = await fetch('http://localhost:6680/order/buy', {
+      const response = await this.proxyFetch('/order/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity }),
       });
 
@@ -323,9 +339,8 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
   ): Promise<number> {
     // Try to place order via Python proxy
     try {
-      const response = await fetch('http://localhost:6680/order/sell', {
+      const response = await this.proxyFetch('/order/sell', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity }),
       });
 
@@ -452,7 +467,7 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
 
     // Use proxy to cancel real orders
     try {
-      const response = await fetch(`http://localhost:6680/order/cancel/${orderId}`, {
+      const response = await this.proxyFetch(`/order/cancel/${orderId}`, {
         method: 'DELETE',
       });
 
@@ -623,9 +638,8 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
 
     // Try to modify via Python proxy
     try {
-      const response = await fetch(`http://localhost:6680/order/stop/${orderId}`, {
+      const response = await this.proxyFetch(`/order/stop/${orderId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, quantity: shares, stopPrice: newStopPrice }),
       });
 

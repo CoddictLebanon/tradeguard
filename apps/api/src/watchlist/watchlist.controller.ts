@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Put, Param, Body, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { WatchlistService } from './watchlist.service';
+import { AddToWatchlistDto, UpdateNotesDto } from './dto/watchlist.dto';
 
 @Controller('watchlist')
 @UseGuards(JwtAuthGuard)
@@ -18,8 +19,8 @@ export class WatchlistController {
   }
 
   @Post()
-  async addToWatchlist(@Body() body: { symbol: string; notes?: string }) {
-    const item = await this.watchlistService.add(body.symbol, body.notes);
+  async addToWatchlist(@Body() dto: AddToWatchlistDto) {
+    const item = await this.watchlistService.add(dto.symbol, dto.notes);
     return { id: item.id };
   }
 
@@ -36,8 +37,8 @@ export class WatchlistController {
   }
 
   @Put(':id/notes')
-  async updateNotes(@Param('id') id: string, @Body() body: { notes: string }) {
-    const item = await this.watchlistService.updateNotes(id, body.notes);
+  async updateNotes(@Param('id') id: string, @Body() dto: UpdateNotesDto) {
+    const item = await this.watchlistService.updateNotes(id, dto.notes);
     return { success: !!item };
   }
 }

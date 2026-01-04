@@ -186,8 +186,14 @@ export class AuthService {
   async createInitialAdmin(): Promise<void> {
     const adminCount = await this.userRepo.count({ where: { role: UserRole.ADMIN } });
     if (adminCount === 0) {
-      // Create default admin if none exists
-      const defaultPassword = process.env.ADMIN_PASSWORD || 'changeme123!';
+      const defaultPassword = process.env.ADMIN_PASSWORD;
+      if (!defaultPassword) {
+        this.logger.error('ADMIN_PASSWORD environment variable is required for initial admin setup');
+        throw new Error('ADMIN_PASSWORD environment variable must be set');
+      }
+      if (defaultPassword.length < 12) {
+        this.logger.warn('ADMIN_PASSWORD should be at least 12 characters for security');
+      }
       await this.register('admin@tradeguard.local', defaultPassword, 'Admin', UserRole.ADMIN);
       this.logger.warn('Created default admin user - CHANGE THE PASSWORD IMMEDIATELY');
     }

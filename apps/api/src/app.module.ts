@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { DatabaseModule } from './database/database.module';
 import { IBModule } from './ib/ib.module';
 import { DataModule } from './data/data.module';
@@ -12,7 +13,6 @@ import { AuthModule } from './auth/auth.module';
 import { TradeUniverseModule } from './universe/trade-universe.module';
 import { EventsModule } from './events/events.module';
 import { RiskModule } from './risk/risk.module';
-import { LoggingModule } from './logging/logging.module';
 import { PositionsModule } from './positions/positions.module';
 import { WatchlistModule } from './watchlist/watchlist.module';
 import { ActivityModule } from './activity/activity.module';
@@ -26,6 +26,10 @@ import { CronLogModule } from './cron-log/cron-log.module';
       isGlobal: true,
       envFilePath: ['../../.env', '.env'],
     }),
+    ThrottlerModule.forRoot([{
+      ttl: 60000, // 1 minute
+      limit: 10,  // 10 requests per minute for auth endpoints
+    }]),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     DatabaseModule,
@@ -38,7 +42,6 @@ import { CronLogModule } from './cron-log/cron-log.module';
     StrategyModule,
     ScannerModule,
     SafetyModule,
-    LoggingModule,
     PositionsModule,
     WatchlistModule,
     ActivityModule,

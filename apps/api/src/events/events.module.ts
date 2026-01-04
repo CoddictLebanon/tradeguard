@@ -1,11 +1,11 @@
 // apps/api/src/events/events.module.ts
 
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { DataModule } from '../data/data.module';
 import { EarningsCalendarService } from './earnings-calendar.service';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [DataModule],
   providers: [EarningsCalendarService],
   exports: [EarningsCalendarService],
 })

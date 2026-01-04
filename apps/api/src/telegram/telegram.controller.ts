@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { TelegramService } from './telegram.service';
+import { UpdateTelegramConfigDto } from './dto/telegram.dto';
 
 @Controller('telegram')
 @UseGuards(JwtAuthGuard)
@@ -22,17 +23,8 @@ export class TelegramController {
   }
 
   @Post('config')
-  async updateConfig(
-    @Body() body: {
-      enabled?: boolean;
-      botToken?: string;
-      chatId?: string;
-      notifyOpened?: boolean;
-      notifyStopRaised?: boolean;
-      notifyClosed?: boolean;
-    },
-  ) {
-    await this.telegramService.updateConfig(body);
+  async updateConfig(@Body() dto: UpdateTelegramConfigDto) {
+    await this.telegramService.updateConfig(dto);
     return { success: true };
   }
 

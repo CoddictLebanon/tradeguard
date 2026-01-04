@@ -11,7 +11,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -28,6 +29,19 @@ IB_PORT = 4002
 PROXY_PORT = int(os.environ.get('IB_PROXY_PORT', 6680))
 HEARTBEAT_INTERVAL = 5  # seconds between heartbeat checks
 HEARTBEAT_MAX_FAILURES = 3  # consecutive failures before marking disconnected
+
+# API Key for authentication (required in production)
+API_KEY = os.environ.get('IB_PROXY_API_KEY', '')
+API_KEY_HEADER = APIKeyHeader(name='X-API-Key', auto_error=False)
+
+async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
+    """Verify API key if configured"""
+    if not API_KEY:
+        # No API key configured - allow (development mode)
+        return True
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return True
 
 # === Global State ===
 ib = IB()
@@ -443,7 +457,7 @@ async def status():
     return _ib_get_status()
 
 @app.post("/connect")
-async def connect(req: ConnectRequest):
+async def connect(req: ConnectRequest, _: bool = Depends(verify_api_key)):
     """Connect to IB Gateway"""
     try:
         success = await run_with_timeout(_ib_connect, req.host, req.port, req.clientId, timeout=10)
@@ -456,7 +470,7 @@ async def connect(req: ConnectRequest):
         return {'success': False, 'error': str(e)}
 
 @app.post("/disconnect")
-async def disconnect():
+async def disconnect(_: bool = Depends(verify_api_key)):
     """Disconnect from IB Gateway"""
     _ib_disconnect()
     return {'success': True}
@@ -477,29 +491,29 @@ async def get_orders():
     return await run_with_timeout(_ib_get_orders)
 
 @app.post("/order/buy")
-async def place_buy_order(req: BuyOrderRequest):
+async def place_buy_order(req: BuyOrderRequest, _: bool = Depends(verify_api_key)):
     """Place a market buy order"""
     return await run_with_timeout(_ib_place_buy_order, req.symbol, req.quantity)
 
 @app.post("/order/sell")
-async def place_sell_order(req: SellOrderRequest):
+async def place_sell_order(req: SellOrderRequest, _: bool = Depends(verify_api_key)):
     """Place a market sell order"""
     return await run_with_timeout(_ib_place_sell_order, req.symbol, req.quantity)
 
 @app.post("/order/stop")
-async def place_stop_order(req: StopOrderRequest):
+async def place_stop_order(req: StopOrderRequest, _: bool = Depends(verify_api_key)):
     """Place a stop loss order"""
     return await run_with_timeout(_ib_place_stop_order, req.symbol, req.quantity, req.stopPrice)
 
 @app.put("/order/stop/{order_id}")
-async def modify_stop_order(order_id: int, req: StopOrderRequest):
+async def modify_stop_order(order_id: int, req: StopOrderRequest, _: bool = Depends(verify_api_key)):
     """Modify an existing stop order"""
     return await run_with_timeout(_ib_modify_stop_order, order_id, req.symbol, req.quantity, req.stopPrice)
 
 @app.delete("/order/cancel/{order_id}")
-async def cancel_order(order_id: int):
+async def cancel_order(order_id: int, _: bool = Depends(verify_api_key)):
     """Cancel an order"""
     return await run_with_timeout(_ib_cancel_order, order_id)
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=PROXY_PORT, log_level='warning')
+    uvicorn.run(app, host='127.0.0.1', port=PROXY_PORT, log_level='warning')

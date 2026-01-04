@@ -1,9 +1,14 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+
+  // Security headers
+  app.use(helmet());
 
   // Allow CORS from multiple origins for remote access
   const allowedOrigins = [
@@ -36,7 +41,7 @@ async function bootstrap() {
 
   const port = process.env.PORT || 667;
   await app.listen(port);
-  console.log(`TradeGuard API running on port ${port}`);
+  logger.log(`TradeGuard API running on port ${port}`);
 }
 
 bootstrap();

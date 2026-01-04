@@ -67,4 +67,17 @@ export class FinnhubService {
       symbols: article.related?.split(',') || [],
     }));
   }
+
+  async getEarningsCalendar(symbol: string): Promise<Array<{ date: string }>> {
+    if (!this.apiKey) {
+      this.logger.warn('FINNHUB_API_KEY not configured');
+      return [];
+    }
+
+    const data = await this.fetch<{ earningsCalendar?: Array<{ date: string }> }>(
+      `/calendar/earnings?symbol=${symbol}`
+    );
+
+    return data?.earningsCalendar || [];
+  }
 }
