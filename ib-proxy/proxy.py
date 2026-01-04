@@ -2,17 +2,18 @@
 """
 IB Proxy - A reliable async service that bridges the trading app with Interactive Brokers.
 Uses FastAPI for async HTTP handling and ThreadPoolExecutor for IB operations with timeouts.
+Includes active heartbeat monitoring to detect stale connections.
 """
 
 import os
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
 import uvicorn
 
 # Suppress ib_insync logging noise
@@ -25,6 +26,8 @@ from ib_insync import IB, Stock, MarketOrder, StopOrder
 IB_TIMEOUT = 5  # seconds - max time to wait for any IB operation
 IB_PORT = 4002
 PROXY_PORT = int(os.environ.get('IB_PROXY_PORT', 6680))
+HEARTBEAT_INTERVAL = 5  # seconds between heartbeat checks
+HEARTBEAT_MAX_FAILURES = 3  # consecutive failures before marking disconnected
 
 # === Global State ===
 ib = IB()
@@ -35,6 +38,9 @@ connection_status = {
     'connected': False,
     'account_id': None,
     'error': None,
+    'last_heartbeat': None,
+    'heartbeat_failures': 0,
+    'heartbeat_verified': False,  # True = actively verified, False = stale/unverified
 }
 
 def _init_ib_thread():
@@ -64,12 +70,44 @@ class ConnectRequest(BaseModel):
     port: int = 4002
     clientId: int = 10
 
+# === Heartbeat Function ===
+def _ib_heartbeat() -> bool:
+    """
+    Active heartbeat check - actually pings IB to verify connection is alive.
+    Returns True if IB responds, False if connection is dead/stale.
+    """
+    with ib_lock:
+        if not ib.isConnected():
+            return False
+        try:
+            # Request current time from IB - this is a lightweight operation
+            # that will fail if the connection is stale
+            server_time = ib.reqCurrentTime()
+            if server_time:
+                return True
+            return False
+        except Exception as e:
+            print(f"[IB Proxy] Heartbeat failed: {e}")
+            return False
+
 # === IB Operations (run in thread pool with timeout) ===
 def _ib_connect(host: str, port: int, client_id: int) -> bool:
     """Connect to IB Gateway - runs in thread pool"""
+    global connection_status
     with ib_lock:
         if ib.isConnected():
-            return True
+            # Verify existing connection with heartbeat
+            try:
+                server_time = ib.reqCurrentTime()
+                if server_time:
+                    return True
+            except:
+                # Connection is stale, disconnect and reconnect
+                try:
+                    ib.disconnect()
+                except:
+                    pass
+
         try:
             ib.connect(host, port, clientId=client_id, timeout=5)
             if ib.isConnected():
@@ -77,15 +115,21 @@ def _ib_connect(host: str, port: int, client_id: int) -> bool:
                 connection_status['connected'] = True
                 connection_status['account_id'] = accounts[0] if accounts else None
                 connection_status['error'] = None
+                connection_status['heartbeat_failures'] = 0
+                connection_status['heartbeat_verified'] = True
+                connection_status['last_heartbeat'] = time.time()
                 print(f"[IB Proxy] Connected - Account: {connection_status['account_id']}")
                 return True
         except Exception as e:
             connection_status['error'] = str(e)
+            connection_status['connected'] = False
+            connection_status['heartbeat_verified'] = False
             print(f"[IB Proxy] Connection failed: {e}")
         return False
 
 def _ib_disconnect():
     """Disconnect from IB Gateway"""
+    global connection_status
     with ib_lock:
         try:
             if ib.isConnected():
@@ -94,20 +138,21 @@ def _ib_disconnect():
             pass
         connection_status['connected'] = False
         connection_status['account_id'] = None
-
-def _ib_is_connected() -> bool:
-    """Check if connected - fast, no lock needed for read"""
-    return ib.isConnected()
+        connection_status['heartbeat_verified'] = False
+        connection_status['heartbeat_failures'] = 0
 
 def _ib_get_status() -> dict:
-    """Get connection status"""
-    is_connected = ib.isConnected()
+    """Get connection status - uses heartbeat-verified state"""
+    # Use heartbeat_verified for accurate status, not ib.isConnected()
+    is_connected = connection_status['connected'] and connection_status['heartbeat_verified']
     return {
         'connected': is_connected,
         'status': 'connected' if is_connected else 'disconnected',
         'tradingMode': 'paper',
         'account': connection_status['account_id'],
-        'error': connection_status['error'] if not is_connected else None
+        'error': connection_status['error'] if not is_connected else None,
+        'lastHeartbeat': connection_status['last_heartbeat'],
+        'heartbeatFailures': connection_status['heartbeat_failures'],
     }
 
 def _ib_place_buy_order(symbol: str, quantity: int) -> dict:
@@ -285,17 +330,66 @@ async def run_with_timeout(func, *args, timeout: float = IB_TIMEOUT):
             raise HTTPException(status_code=503, detail=error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
 
-# === Background connection monitor ===
-async def connection_monitor():
-    """Background task that monitors and auto-reconnects"""
+# === Background Heartbeat Monitor ===
+async def heartbeat_monitor():
+    """
+    Background task that actively monitors IB connection with heartbeats.
+    Runs every 5 seconds. After 3 consecutive failures (15s), marks as disconnected.
+    """
+    global connection_status
+
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
+
         try:
-            if not ib.isConnected():
-                print("[IB Proxy] Attempting to reconnect...")
-                await run_with_timeout(_ib_connect, '127.0.0.1', IB_PORT, 10, timeout=10)
+            # Run heartbeat check with timeout
+            loop = asyncio.get_event_loop()
+            future = loop.run_in_executor(executor, _ib_heartbeat)
+            heartbeat_ok = await asyncio.wait_for(future, timeout=IB_TIMEOUT)
+
+            if heartbeat_ok:
+                # Heartbeat successful - reset failure counter
+                if connection_status['heartbeat_failures'] > 0:
+                    print(f"[IB Proxy] Heartbeat restored after {connection_status['heartbeat_failures']} failures")
+                connection_status['heartbeat_failures'] = 0
+                connection_status['heartbeat_verified'] = True
+                connection_status['last_heartbeat'] = time.time()
+                connection_status['connected'] = True
+                connection_status['error'] = None
+            else:
+                # Heartbeat failed
+                connection_status['heartbeat_failures'] += 1
+                print(f"[IB Proxy] Heartbeat failed ({connection_status['heartbeat_failures']}/{HEARTBEAT_MAX_FAILURES})")
+
+                if connection_status['heartbeat_failures'] >= HEARTBEAT_MAX_FAILURES:
+                    # Mark as disconnected after 3 consecutive failures
+                    if connection_status['heartbeat_verified']:  # Only log once
+                        print(f"[IB Proxy] Connection dead - {HEARTBEAT_MAX_FAILURES} consecutive heartbeat failures")
+                    connection_status['heartbeat_verified'] = False
+                    connection_status['connected'] = False
+                    connection_status['error'] = f"Heartbeat failed {HEARTBEAT_MAX_FAILURES} times"
+
+                    # Try to reconnect
+                    try:
+                        print("[IB Proxy] Attempting to reconnect...")
+                        await run_with_timeout(_ib_connect, '127.0.0.1', IB_PORT, 10, timeout=10)
+                    except Exception as e:
+                        print(f"[IB Proxy] Reconnect failed: {e}")
+
+        except asyncio.TimeoutError:
+            # Heartbeat timed out - treat as failure
+            connection_status['heartbeat_failures'] += 1
+            print(f"[IB Proxy] Heartbeat timed out ({connection_status['heartbeat_failures']}/{HEARTBEAT_MAX_FAILURES})")
+
+            if connection_status['heartbeat_failures'] >= HEARTBEAT_MAX_FAILURES:
+                if connection_status['heartbeat_verified']:
+                    print(f"[IB Proxy] Connection dead - heartbeat timeouts")
+                connection_status['heartbeat_verified'] = False
+                connection_status['connected'] = False
+                connection_status['error'] = "Heartbeat timeout"
+
         except Exception as e:
-            print(f"[IB Proxy] Reconnect failed: {e}")
+            print(f"[IB Proxy] Heartbeat monitor error: {e}")
 
 # === FastAPI App ===
 @asynccontextmanager
@@ -303,6 +397,7 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     print(f"[IB Proxy] Starting on port {PROXY_PORT}...")
     print(f"[IB Proxy] Endpoints: /status, /account, /positions, /orders")
+    print(f"[IB Proxy] Heartbeat: every {HEARTBEAT_INTERVAL}s, disconnect after {HEARTBEAT_MAX_FAILURES} failures")
 
     # Try initial connection
     try:
@@ -310,9 +405,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[IB Proxy] Initial connection failed: {e}")
 
-    # Start background monitor
-    monitor_task = asyncio.create_task(connection_monitor())
-    print("[IB Proxy] Connection monitor started (auto-reconnect every 5s)")
+    # Start heartbeat monitor
+    monitor_task = asyncio.create_task(heartbeat_monitor())
+    print("[IB Proxy] Heartbeat monitor started")
 
     yield
 
@@ -335,12 +430,16 @@ app.add_middleware(
 # === Endpoints ===
 @app.get("/health")
 async def health():
-    """Health check - returns immediately, never blocks"""
-    return {'status': 'ok', 'ib_connected': _ib_is_connected()}
+    """Health check - returns proxy health and IB connection status"""
+    return {
+        'status': 'ok',
+        'ib_connected': connection_status['connected'] and connection_status['heartbeat_verified'],
+        'heartbeat_failures': connection_status['heartbeat_failures'],
+    }
 
 @app.get("/status")
 async def status():
-    """Get connection status - returns immediately"""
+    """Get connection status - uses heartbeat-verified state"""
     return _ib_get_status()
 
 @app.post("/connect")

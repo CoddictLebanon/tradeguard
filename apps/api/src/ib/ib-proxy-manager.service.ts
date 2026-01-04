@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+import { TelegramService } from '../telegram/telegram.service';
 
 @Injectable()
 export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
@@ -15,7 +16,12 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
 
   private readonly pythonPath: string;
 
-  constructor() {
+  // IB Gateway disconnection tracking
+  private ibGatewayDisconnectedSince: Date | null = null;
+  private ibGatewayDisconnectNotified = false;
+  private readonly disconnectNotifyThresholdMs = 2 * 60 * 1000; // 2 minutes
+
+  constructor(private readonly telegramService: TelegramService) {
     // Path to the proxy script (relative to the trading root)
     this.proxyPath = path.resolve(__dirname, '../../../../ib-proxy/proxy.py');
     this.pythonPath = path.resolve(__dirname, '../../../../ib-proxy/venv/bin/python');
@@ -23,7 +29,15 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     this.logger.log('IB Proxy Manager initializing...');
-    await this.startProxy();
+
+    // Check if proxy is already running externally (e.g., via PM2)
+    const alreadyRunning = await this.checkProxyHealth();
+    if (alreadyRunning) {
+      this.logger.log('IB Proxy already running externally (PM2), skipping spawn');
+    } else {
+      await this.startProxy();
+    }
+
     this.startHealthCheck();
   }
 
@@ -170,10 +184,23 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
       }
 
       const isHealthy = await this.checkProxyHealth();
-      if (!isHealthy && !this.proxyProcess) {
-        this.logger.warn('Proxy health check failed, attempting restart...');
-        this.startProxy();
+
+      // Only attempt to spawn if:
+      // 1. Proxy is not healthy
+      // 2. We spawned it ourselves (proxyProcess is not null means we manage it)
+      // If proxyProcess is null and proxy is unhealthy, it's likely managed externally (PM2)
+      // and we should NOT try to spawn - let PM2 handle restarts
+      if (!isHealthy && this.proxyProcess) {
+        this.logger.warn('Proxy health check failed, our spawned process may have died');
+        // The exit handler will handle restart
+      } else if (!isHealthy && !this.proxyProcess) {
+        // Proxy is down and we didn't spawn it - log but don't try to spawn
+        // PM2 should handle this
+        this.logger.warn('Proxy health check failed - proxy managed externally, waiting for PM2 restart');
       }
+
+      // Check IB Gateway connection status (runs regardless of who manages proxy)
+      await this.checkIBGatewayConnection();
     }, 30000);
   }
 
@@ -195,6 +222,77 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async checkIBGatewayConnection(): Promise<void> {
+    try {
+      const response = await fetch('http://localhost:6680/status', {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const status = (await response.json()) as { connected: boolean };
+      const isConnected = status.connected;
+
+      if (!isConnected) {
+        // IB Gateway is disconnected
+        if (!this.ibGatewayDisconnectedSince) {
+          // Start tracking disconnection time
+          this.ibGatewayDisconnectedSince = new Date();
+          this.logger.warn('[IB Gateway] Disconnection detected, starting 2-minute timer');
+        } else {
+          // Check if we've been disconnected for more than 2 minutes
+          const disconnectedMs = Date.now() - this.ibGatewayDisconnectedSince.getTime();
+
+          if (disconnectedMs >= this.disconnectNotifyThresholdMs && !this.ibGatewayDisconnectNotified) {
+            // Send notification
+            const disconnectedMinutes = Math.floor(disconnectedMs / 60000);
+            this.logger.warn(`[IB Gateway] Disconnected for ${disconnectedMinutes} minutes, sending notification`);
+
+            try {
+              await this.telegramService.sendMessage(
+                `⚠️ IB Gateway Disconnected\n\nIB Gateway has been disconnected for more than 2 minutes.\n\nDisconnected since: ${this.ibGatewayDisconnectedSince.toLocaleString()}`,
+              );
+              this.ibGatewayDisconnectNotified = true;
+            } catch (error) {
+              this.logger.error(`Failed to send disconnect notification: ${(error as Error).message}`);
+            }
+          }
+        }
+      } else {
+        // IB Gateway is connected
+        if (this.ibGatewayDisconnectedSince) {
+          // Was disconnected, now reconnected
+          const wasDisconnectedMs = Date.now() - this.ibGatewayDisconnectedSince.getTime();
+          const disconnectedMinutes = Math.floor(wasDisconnectedMs / 60000);
+          const disconnectedSeconds = Math.floor((wasDisconnectedMs % 60000) / 1000);
+
+          this.logger.log(`[IB Gateway] Reconnected after ${disconnectedMinutes}m ${disconnectedSeconds}s`);
+
+          // Send reconnection notification if we had sent a disconnect notification
+          if (this.ibGatewayDisconnectNotified) {
+            try {
+              await this.telegramService.sendMessage(
+                `✅ IB Gateway Reconnected\n\nIB Gateway is back online.\n\nWas disconnected for: ${disconnectedMinutes}m ${disconnectedSeconds}s`,
+              );
+            } catch (error) {
+              this.logger.error(`Failed to send reconnect notification: ${(error as Error).message}`);
+            }
+          }
+
+          // Reset tracking
+          this.ibGatewayDisconnectedSince = null;
+          this.ibGatewayDisconnectNotified = false;
+        }
+      }
+    } catch (error) {
+      // Can't reach proxy - don't track this as IB Gateway disconnection
+      // (proxy health check handles proxy issues separately)
+      this.logger.debug(`[IB Gateway] Status check failed: ${(error as Error).message}`);
+    }
+  }
+
   /**
    * Get proxy status for external monitoring
    */
@@ -202,11 +300,19 @@ export class IBProxyManagerService implements OnModuleInit, OnModuleDestroy {
     running: boolean;
     pid: number | null;
     restartAttempts: number;
+    ibGateway: {
+      disconnectedSince: Date | null;
+      disconnectNotified: boolean;
+    };
   } {
     return {
       running: this.proxyProcess !== null && !this.proxyProcess.killed,
       pid: this.proxyProcess?.pid ?? null,
       restartAttempts: this.restartAttempts,
+      ibGateway: {
+        disconnectedSince: this.ibGatewayDisconnectedSince,
+        disconnectNotified: this.ibGatewayDisconnectNotified,
+      },
     };
   }
 

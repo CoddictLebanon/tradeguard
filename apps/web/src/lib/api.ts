@@ -1,4 +1,22 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:667';
+// Dynamically determine API base URL based on current browser host
+function getApiBase(): string {
+  if (typeof window !== 'undefined') {
+    // In browser: use same host as the page, different port
+    const host = window.location.hostname;
+    return `http://${host}:667`;
+  }
+  // Server-side or fallback
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:667';
+}
+
+function getIBProxyBase(): string {
+  if (typeof window !== 'undefined') {
+    // In browser: use same host as the page, IB proxy port
+    const host = window.location.hostname;
+    return `http://${host}:6680`;
+  }
+  return 'http://localhost:6680';
+}
 
 interface ApiOptions {
   method?: string;
@@ -8,6 +26,7 @@ interface ApiOptions {
 
 async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body, token } = options;
+  const apiBase = getApiBase();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -17,7 +36,7 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await fetch(`${apiBase}${endpoint}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -430,10 +449,11 @@ export const api = {
   // Interactive Brokers (via Python proxy on port 6680)
   // Helper to add timeout to IB calls (proxy may hang if IB is disconnected)
   getIBStatus: async () => {
+    const ibBase = getIBProxyBase();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch('http://localhost:6680/status', { signal: controller.signal });
+      const res = await fetch(`${ibBase}/status`, { signal: controller.signal });
       return res.json();
     } finally {
       clearTimeout(timeout);
@@ -441,10 +461,11 @@ export const api = {
   },
 
   reconnectIB: async () => {
+    const ibBase = getIBProxyBase();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const res = await fetch('http://localhost:6680/connect', {
+      const res = await fetch(`${ibBase}/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ port: 4002 }),
@@ -457,10 +478,11 @@ export const api = {
   },
 
   getIBAccount: async () => {
+    const ibBase = getIBProxyBase();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch('http://localhost:6680/account', { signal: controller.signal });
+      const res = await fetch(`${ibBase}/account`, { signal: controller.signal });
       if (!res.ok) throw new Error('Failed to get IB account');
       return res.json();
     } finally {
@@ -469,10 +491,11 @@ export const api = {
   },
 
   getIBPositions: async () => {
+    const ibBase = getIBProxyBase();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch('http://localhost:6680/positions', { signal: controller.signal });
+      const res = await fetch(`${ibBase}/positions`, { signal: controller.signal });
       if (!res.ok) throw new Error('Failed to get IB positions');
       return res.json();
     } finally {

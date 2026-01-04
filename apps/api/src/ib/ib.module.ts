@@ -9,12 +9,14 @@ import { Trade } from '../entities/trade.entity';
 import { ActivityLog } from '../entities/activity-log.entity';
 import { SafetyModule } from '../safety/safety.module';
 import { DataModule } from '../data/data.module';
+import { TelegramModule } from '../telegram/telegram.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Position, Trade, ActivityLog]),
     forwardRef(() => SafetyModule),
     DataModule,
+    TelegramModule,
   ],
   controllers: [IBController],
   providers: [IBService, IBEventsService, IBProxyManagerService],

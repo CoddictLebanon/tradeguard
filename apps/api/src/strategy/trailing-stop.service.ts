@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Position, PositionStatus } from '../entities/position.entity';
+import { PendingStopUpdate } from '../entities/pending-stop-update.entity';
 import { PolygonService } from '../data/polygon.service';
 import { StockBar } from '../data/data.types';
 import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
@@ -14,6 +15,10 @@ import {
   DEFAULT_SIMULATION_CONFIG,
 } from '../safety/safety.types';
 import { CronLogService } from '../cron-log/cron-log.service';
+
+const MAX_IMMEDIATE_RETRIES = 3;
+const RETRY_DELAYS = [1000, 3000, 5000]; // Exponential backoff: 1s, 3s, 5s
+const MAX_CATCHUP_RETRIES = 10; // Max retries before marking as permanently failed
 
 export interface StructuralAnalysis {
   currentHigh: number;
@@ -47,6 +52,8 @@ export class TrailingStopService {
     private positionRepo: Repository<Position>,
     @InjectRepository(ActivityLog)
     private activityRepo: Repository<ActivityLog>,
+    @InjectRepository(PendingStopUpdate)
+    private pendingUpdateRepo: Repository<PendingStopUpdate>,
     private readonly polygonService: PolygonService,
     private readonly ibService: IBService,
     private readonly eventEmitter: EventEmitter2,
@@ -187,31 +194,15 @@ export class TrailingStopService {
       if (analysis.shouldUpdateStop && analysis.newStopPrice) {
         // FIRST: Update stop in IB Gateway if position has an IB stop order
         if (position.ibStopOrderId) {
-          try {
-            const ibResult = await this.ibService.modifyStopPrice(
-              parseInt(position.ibStopOrderId, 10),
-              position.symbol,
-              position.shares,
-              currentStop,
-              analysis.newStopPrice,
-            );
+          const ibSuccess = await this.updateIBStopWithRetry(
+            position,
+            currentStop,
+            analysis.newStopPrice,
+          );
 
-            if (!ibResult.success) {
-              this.logger.warn(
-                `${position.symbol}: IB stop modification failed: ${ibResult.reason}`,
-              );
-              // Don't update database if IB update failed
-              return null;
-            }
-
-            this.logger.log(
-              `${position.symbol}: IB stop updated successfully`,
-            );
-          } catch (ibError) {
-            this.logger.error(
-              `${position.symbol}: Failed to update IB stop: ${(ibError as Error).message}`,
-            );
-            // Don't update database if IB update failed
+          if (!ibSuccess) {
+            // Queue for later retry via catch-up mechanism
+            await this.queueFailedStopUpdate(position, currentStop, analysis.newStopPrice);
             return null;
           }
         }
@@ -587,5 +578,207 @@ export class TrailingStopService {
     }
     this.config = { ...this.config, ...config };
     this.logger.log(`Trailing stop config updated: ${JSON.stringify(this.config)}`);
+  }
+
+  /**
+   * Update IB stop with immediate retry logic (3 attempts with exponential backoff)
+   */
+  private async updateIBStopWithRetry(
+    position: Position,
+    currentStop: number,
+    newStop: number,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < MAX_IMMEDIATE_RETRIES; attempt++) {
+      try {
+        const ibResult = await this.ibService.modifyStopPrice(
+          parseInt(position.ibStopOrderId!, 10),
+          position.symbol,
+          position.shares,
+          currentStop,
+          newStop,
+        );
+
+        if (ibResult.success) {
+          this.logger.log(`${position.symbol}: IB stop updated successfully`);
+          return true;
+        }
+
+        this.logger.warn(
+          `${position.symbol}: IB stop modification failed (attempt ${attempt + 1}/${MAX_IMMEDIATE_RETRIES}): ${ibResult.reason}`,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `${position.symbol}: IB stop error (attempt ${attempt + 1}/${MAX_IMMEDIATE_RETRIES}): ${(error as Error).message}`,
+        );
+      }
+
+      // Wait before next retry (unless it's the last attempt)
+      if (attempt < MAX_IMMEDIATE_RETRIES - 1) {
+        await this.sleep(RETRY_DELAYS[attempt]);
+      }
+    }
+
+    this.logger.error(
+      `${position.symbol}: IB stop update failed after ${MAX_IMMEDIATE_RETRIES} attempts, queuing for catch-up`,
+    );
+    return false;
+  }
+
+  /**
+   * Queue a failed stop update for later retry
+   */
+  private async queueFailedStopUpdate(
+    position: Position,
+    oldStop: number,
+    newStop: number,
+  ): Promise<void> {
+    // Check if already queued
+    const existing = await this.pendingUpdateRepo.findOne({
+      where: { positionId: position.id, status: 'pending' },
+    });
+
+    if (existing) {
+      // Update existing pending record with new stop price
+      await this.pendingUpdateRepo.update(existing.id, {
+        newStopPrice: newStop,
+        lastError: 'Retry scheduled - IB unavailable',
+        lastRetryAt: new Date(),
+      });
+      this.logger.log(`${position.symbol}: Updated existing pending stop update`);
+    } else {
+      // Create new pending record
+      await this.pendingUpdateRepo.save({
+        positionId: position.id,
+        symbol: position.symbol,
+        oldStopPrice: oldStop,
+        newStopPrice: newStop,
+        retryCount: 0,
+        lastError: 'Initial failure - IB unavailable',
+        status: 'pending',
+      });
+      this.logger.log(`${position.symbol}: Queued stop update for catch-up retry`);
+    }
+  }
+
+  /**
+   * Catch-up cron job - retry pending stop updates every 30 minutes
+   */
+  @Cron('*/30 * * * *') // Every 30 minutes
+  async catchUpPendingStopUpdates(): Promise<void> {
+    const pendingUpdates = await this.pendingUpdateRepo.find({
+      where: { status: 'pending' },
+      relations: ['position'],
+    });
+
+    if (pendingUpdates.length === 0) {
+      return; // No pending updates, skip logging
+    }
+
+    this.logger.log(`Catch-up: Processing ${pendingUpdates.length} pending stop updates...`);
+
+    for (const pending of pendingUpdates) {
+      // Skip if position is no longer open
+      if (!pending.position || pending.position.status !== PositionStatus.OPEN) {
+        await this.pendingUpdateRepo.update(pending.id, {
+          status: 'failed',
+          lastError: 'Position no longer open',
+        });
+        continue;
+      }
+
+      // Check if max retries exceeded
+      if (pending.retryCount >= MAX_CATCHUP_RETRIES) {
+        await this.pendingUpdateRepo.update(pending.id, {
+          status: 'failed',
+          lastError: `Max retries (${MAX_CATCHUP_RETRIES}) exceeded`,
+        });
+        this.logger.error(
+          `${pending.symbol}: Permanently failed after ${MAX_CATCHUP_RETRIES} catch-up retries`,
+        );
+        continue;
+      }
+
+      // Attempt the update
+      try {
+        const ibResult = await this.ibService.modifyStopPrice(
+          parseInt(pending.position.ibStopOrderId!, 10),
+          pending.symbol,
+          pending.position.shares,
+          Number(pending.oldStopPrice),
+          Number(pending.newStopPrice),
+        );
+
+        if (ibResult.success) {
+          // Success! Update position and mark pending as complete
+          await this.positionRepo.update(pending.positionId, {
+            stopPrice: pending.newStopPrice,
+          });
+
+          await this.pendingUpdateRepo.update(pending.id, {
+            status: 'success',
+            lastRetryAt: new Date(),
+          });
+
+          // Log the activity
+          await this.activityRepo.save({
+            type: ActivityType.TRAILING_STOP_UPDATED,
+            positionId: pending.positionId,
+            symbol: pending.symbol,
+            message: `Stop raised for ${pending.symbol}: $${Number(pending.oldStopPrice).toFixed(2)} → $${Number(pending.newStopPrice).toFixed(2)} (catch-up)`,
+            details: {
+              previousStop: pending.oldStopPrice,
+              newStop: pending.newStopPrice,
+              catchUpRetry: true,
+              retryCount: pending.retryCount + 1,
+            },
+          });
+
+          // Emit event for Telegram
+          this.eventEmitter.emit('activity.trade', {
+            type: ActivityType.TRAILING_STOP_UPDATED,
+            symbol: pending.symbol,
+            details: {
+              oldStopPrice: pending.oldStopPrice,
+              newStopPrice: pending.newStopPrice,
+            },
+          });
+
+          this.logger.log(
+            `${pending.symbol}: Catch-up successful after ${pending.retryCount + 1} retries`,
+          );
+        } else {
+          // Failed, increment retry count
+          await this.pendingUpdateRepo.update(pending.id, {
+            retryCount: pending.retryCount + 1,
+            lastError: ibResult.reason || 'IB modification failed',
+            lastRetryAt: new Date(),
+          });
+          this.logger.warn(
+            `${pending.symbol}: Catch-up retry ${pending.retryCount + 1} failed: ${ibResult.reason}`,
+          );
+        }
+      } catch (error) {
+        // Error, increment retry count
+        await this.pendingUpdateRepo.update(pending.id, {
+          retryCount: pending.retryCount + 1,
+          lastError: (error as Error).message,
+          lastRetryAt: new Date(),
+        });
+        this.logger.warn(
+          `${pending.symbol}: Catch-up retry ${pending.retryCount + 1} error: ${(error as Error).message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Get pending stop updates count (for monitoring)
+   */
+  async getPendingUpdatesCount(): Promise<number> {
+    return this.pendingUpdateRepo.count({ where: { status: 'pending' } });
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
