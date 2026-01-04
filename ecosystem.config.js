@@ -34,6 +34,7 @@ module.exports = {
       max_restarts: 10,
       env: {
         IB_PROXY_PORT: '6680',
+        IB_PROXY_API_KEY: '880c7a362729f226a75ae0d3ba4a9069f69f145042623933ac0198c68a7063b8',
       },
     },
   ],
