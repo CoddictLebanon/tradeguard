@@ -39,3 +39,6 @@ debug-*
 
 # Python virtual environment
 ib-proxy/venv/
+
+# Python cache
+__pycache__/
