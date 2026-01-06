@@ -77,13 +77,8 @@ export class BuyQualificationService {
         };
       }
 
-      // Use only complete trading days - exclude the last bar if it might be today's incomplete data
-      // The last COMPLETE bar is our reference point (the "last day")
-      // When asOfDate is provided, use that as the reference date instead of today
-      const referenceDate = asOfDate || new Date().toISOString().split('T')[0];
-      const lastBarDate = rawBars[rawBars.length - 1].timestamp.toISOString().split('T')[0];
-      const bars = lastBarDate === referenceDate ? rawBars.slice(0, -1) : rawBars;
-
+      // Use all bars including today's live data for real-time analysis
+      const bars = rawBars;
       const currentBar = bars[bars.length - 1];
       const close = currentBar.close;
 

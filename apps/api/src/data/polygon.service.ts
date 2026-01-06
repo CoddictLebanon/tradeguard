@@ -49,32 +49,69 @@ export class PolygonService {
   }
 
   async getQuote(symbol: string): Promise<StockQuote> {
-    const data = await this.fetch<any>(`/v2/aggs/ticker/${symbol}/prev`);
+    // Use the single-call snapshot endpoint which includes prevDay data
+    const snapshot = await this.fetch<any>(`/v2/snapshot/locale/us/markets/stocks/tickers/${symbol}`);
+    const ticker = snapshot.ticker;
 
-    if (!data.results || data.results.length === 0) {
+    if (!ticker) {
       throw new Error(`No quote data for ${symbol}`);
     }
 
-    const result = data.results[0];
-    const previousClose = result.c;
-
-    // Get current snapshot
-    const snapshot = await this.fetch<any>(`/v2/snapshot/locale/us/markets/stocks/tickers/${symbol}`);
-    const current = snapshot.ticker;
+    const previousClose = ticker.prevDay?.c || ticker.day?.c;
+    const currentPrice = ticker.day?.c || ticker.lastTrade?.p || previousClose;
 
     return {
       symbol,
-      price: current?.day?.c || result.c,
-      open: current?.day?.o || result.o,
-      high: current?.day?.h || result.h,
-      low: current?.day?.l || result.l,
-      close: current?.day?.c || result.c,
-      volume: current?.day?.v || result.v,
+      price: currentPrice,
+      open: ticker.day?.o || previousClose,
+      high: ticker.day?.h || currentPrice,
+      low: ticker.day?.l || currentPrice,
+      close: currentPrice,
+      volume: ticker.day?.v || 0,
       previousClose,
-      change: (current?.day?.c || result.c) - previousClose,
-      changePercent: (((current?.day?.c || result.c) - previousClose) / previousClose) * 100,
+      change: currentPrice - previousClose,
+      changePercent: previousClose ? ((currentPrice - previousClose) / previousClose) * 100 : 0,
       timestamp: new Date(),
     };
+  }
+
+  // Batch fetch quotes for multiple symbols in a single API call
+  async getQuotesBatch(symbols: string[]): Promise<Map<string, StockQuote>> {
+    const quotes = new Map<string, StockQuote>();
+
+    if (symbols.length === 0) return quotes;
+
+    try {
+      // Use the tickers snapshot endpoint with specific tickers
+      const tickerList = symbols.join(',');
+      const snapshot = await this.fetch<any>(`/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickerList}`);
+
+      if (snapshot.tickers) {
+        for (const ticker of snapshot.tickers) {
+          const symbol = ticker.ticker;
+          const previousClose = ticker.prevDay?.c || ticker.day?.c;
+          const currentPrice = ticker.day?.c || ticker.lastTrade?.p || previousClose;
+
+          quotes.set(symbol, {
+            symbol,
+            price: currentPrice,
+            open: ticker.day?.o || previousClose,
+            high: ticker.day?.h || currentPrice,
+            low: ticker.day?.l || currentPrice,
+            close: currentPrice,
+            volume: ticker.day?.v || 0,
+            previousClose,
+            change: currentPrice - previousClose,
+            changePercent: previousClose ? ((currentPrice - previousClose) / previousClose) * 100 : 0,
+            timestamp: new Date(),
+          });
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Failed to fetch batch quotes: ${(err as Error).message}`);
+    }
+
+    return quotes;
   }
 
   async getBars(

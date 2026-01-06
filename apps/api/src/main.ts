@@ -12,7 +12,7 @@ async function bootstrap() {
 
   // Allow CORS from multiple origins for remote access
   const allowedOrigins = [
-    'http://localhost:666',
+    'http://localhost:3666',
     process.env.FRONTEND_URL,
   ].filter(Boolean);
 
@@ -39,7 +39,7 @@ async function bootstrap() {
     transform: true,
   }));
 
-  const port = process.env.PORT || 667;
+  const port = process.env.PORT || 3667;
   await app.listen(port);
   logger.log(`TradeGuard API running on port ${port}`);
 }

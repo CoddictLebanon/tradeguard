@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import SimulationResultModal, { SimulationResult } from '@/components/SimulationResultModal';
@@ -53,14 +53,18 @@ interface Opportunity {
   createdAt: string;
 }
 
-interface Filters {
-  qualifiedOnly: boolean;
-  trend: 'all' | 'Uptrend' | 'Flat' | 'Declining';
-  pullbackInRange: boolean;
-  bounceOk: boolean;
-  aboveSma200: boolean;
-  notExtended: boolean;
-  minScore: number;
+// Helper function to check if an opportunity is qualified
+function isQualified(opp: Opportunity): boolean {
+  // ADV must be at least 2M
+  if (Number(opp.factors?.adv45 || 0) < 2_000_000) return false;
+  // All metrics must be green
+  if (opp.factors?.trendState !== 'Uptrend') return false;
+  if (!opp.factors?.pullbackInRange) return false;
+  if (!opp.factors?.bounceOk) return false;
+  if (!opp.factors?.aboveSma200) return false;
+  if (!opp.factors?.notExtended) return false;
+  if (!opp.factors?.noSharpDrop) return false;
+  return true;
 }
 
 export default function OpportunitiesPage() {
@@ -71,7 +75,6 @@ export default function OpportunitiesPage() {
   const [scanning, setScanning] = useState(false);
   const [selected, setSelected] = useState<Opportunity | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [positionCalc, setPositionCalc] = useState<PositionSizeResult | null>(null);
   const [calculatingPosition, setCalculatingPosition] = useState(false);
@@ -79,40 +82,13 @@ export default function OpportunitiesPage() {
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [showSimulationResult, setShowSimulationResult] = useState(false);
   const [runningSimulation, setRunningSimulation] = useState(false);
-  const [filters, setFilters] = useState<Filters>({
-    qualifiedOnly: true,
-    trend: 'all',
-    pullbackInRange: false,
-    bounceOk: false,
-    aboveSma200: false,
-    notExtended: false,
-    minScore: 0,
-  });
+  const [showFinalConfirm, setShowFinalConfirm] = useState(false);
+  const [executingTrade, setExecutingTrade] = useState(false);
   const [openPositionSymbols, setOpenPositionSymbols] = useState<Set<string>>(new Set());
+  const [totalQualifiedCount, setTotalQualifiedCount] = useState<number | null>(null);
 
-  const filteredOpportunities = opportunities.filter((opp) => {
-    // ADV must be at least 2M (always enforced)
-    if (Number(opp.factors?.adv45 || 0) < 2_000_000) return false;
-
-    // Qualified Only = all metrics must be green
-    if (filters.qualifiedOnly) {
-      if (opp.factors?.trendState !== 'Uptrend') return false;
-      if (!opp.factors?.pullbackInRange) return false;
-      if (!opp.factors?.bounceOk) return false;
-      if (!opp.factors?.aboveSma200) return false;
-      if (!opp.factors?.notExtended) return false;
-      if (!opp.factors?.noSharpDrop) return false;
-    } else {
-      // Individual filters
-      if (filters.trend !== 'all' && opp.factors?.trendState !== filters.trend) return false;
-      if (filters.pullbackInRange && !opp.factors?.pullbackInRange) return false;
-      if (filters.bounceOk && !opp.factors?.bounceOk) return false;
-      if (filters.aboveSma200 && !opp.factors?.aboveSma200) return false;
-      if (filters.notExtended && !opp.factors?.notExtended) return false;
-    }
-    if (filters.minScore > 0 && opp.score < filters.minScore) return false;
-    return true;
-  });
+  // Only show qualified opportunities (stricter frontend filter)
+  const qualifiedOpportunities = opportunities.filter(isQualified);
 
   const fetchOpportunities = async () => {
     if (!token) return;
@@ -127,6 +103,14 @@ export default function OpportunitiesPage() {
     }
   };
 
+  // Store live prices separately to avoid re-rendering full opportunity data
+  const [livePrices, setLivePrices] = useState<Record<string, { price: number; change?: number; changePercent?: number }>>({});
+
+  // Track previous prices to detect changes
+  const prevPricesRef = useRef<Record<string, number>>({});
+  // Track which symbols just had price changes (with direction: 'up' | 'down')
+  const [priceFlash, setPriceFlash] = useState<Record<string, 'up' | 'down'>>({});
+
   useEffect(() => {
     // Clean up duplicates on initial load
     if (token) {
@@ -136,6 +120,50 @@ export default function OpportunitiesPage() {
     const interval = setInterval(fetchOpportunities, 30000);
     return () => clearInterval(interval);
   }, [token]);
+
+  // Live price updates every 10 seconds - only for qualified opportunities
+  useEffect(() => {
+    if (!token || qualifiedOpportunities.length === 0) return;
+
+    const fetchLivePrices = async () => {
+      try {
+        // Only fetch prices for qualified opportunities
+        const symbols = qualifiedOpportunities.map((o) => o.symbol);
+        const quotes = await api.getLiveQuotes(token, symbols);
+
+        // Detect price changes and trigger flash
+        const changedSymbols: Record<string, 'up' | 'down'> = {};
+        for (const symbol of symbols) {
+          const newPrice = quotes[symbol]?.price;
+          const oldPrice = prevPricesRef.current[symbol];
+          if (newPrice !== undefined && oldPrice !== undefined && newPrice !== oldPrice) {
+            changedSymbols[symbol] = newPrice > oldPrice ? 'up' : 'down';
+          }
+          if (newPrice !== undefined) {
+            prevPricesRef.current[symbol] = newPrice;
+          }
+        }
+
+        // Trigger flash for changed symbols
+        if (Object.keys(changedSymbols).length > 0) {
+          setPriceFlash(changedSymbols);
+          // Clear flash after animation duration
+          setTimeout(() => setPriceFlash({}), 600);
+        }
+
+        setLivePrices(quotes);
+      } catch {
+        // Silently fail - non-critical
+      }
+    };
+
+    // Fetch immediately
+    fetchLivePrices();
+
+    // Then every 10 seconds
+    const interval = setInterval(fetchLivePrices, 10000);
+    return () => clearInterval(interval);
+  }, [token, qualifiedOpportunities.length]);
 
   useEffect(() => {
     if (token) {
@@ -173,12 +201,13 @@ export default function OpportunitiesPage() {
       setOpportunities(data);
       const dateMsg = asOfDate ? ` for ${asOfDate}` : '';
       // Show appropriate message based on scan result
+      const foundCount = result.opportunities?.length || 0;
+      setTotalQualifiedCount(foundCount);
       if (result.skipped) {
         setScanMessage('Scan already in progress. Please wait and try again.');
       } else if (result.message) {
         setScanMessage(result.message);
       } else {
-        const foundCount = result.opportunities?.length || 0;
         const totalScanned = result.scannedCount || 0;
         setScanMessage(foundCount === 0
           ? `Scanned ${totalScanned} stocks${dateMsg}. No qualified opportunities found.`
@@ -233,20 +262,33 @@ export default function OpportunitiesPage() {
       return;
     }
 
-    // Normal approval flow
+    // Normal approval flow - execute the trade
+    setExecutingTrade(true);
     try {
-      await api.approveOpportunity(token, selected.id);
+      const result = await api.approveOpportunity(token, selected.id);
+      if (result.success) {
+        // Show success message
+        setScanMessage(`Trade executed: ${result.shares} shares of ${selected.symbol} @ $${result.entryPrice?.toFixed(2)}`);
+        setTimeout(() => setScanMessage(null), 8000);
+      } else {
+        // Show error from trade execution
+        setError(result.error || 'Trade execution failed');
+      }
       await fetchOpportunities();
       setShowConfirmModal(false);
+      setShowFinalConfirm(false);
       setPositionCalc(null);
       setSelected(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve');
+    } finally {
+      setExecutingTrade(false);
     }
   };
 
   const handleCancelApprove = () => {
     setShowConfirmModal(false);
+    setShowFinalConfirm(false);
     setPositionCalc(null);
   };
 
@@ -290,123 +332,24 @@ export default function OpportunitiesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white">Opportunities</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`px-3 py-1.5 text-sm rounded transition-colors ${
-              showFilters ? 'bg-gray-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            Filters {filteredOpportunities.length !== opportunities.length && `(${filteredOpportunities.length})`}
-          </button>
-          <button
-            onClick={handleScan}
-            disabled={scanning}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded transition-colors"
-          >
-            {scanning ? 'Scanning...' : 'Scan'}
-          </button>
-        </div>
-      </div>
-
-      {showFilters && (
-        <div className="bg-gray-800 p-3 rounded border border-gray-700">
-          <div className="flex flex-wrap gap-4 items-center text-sm">
-            {/* Qualified Only Toggle */}
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filters.qualifiedOnly}
-                onChange={(e) => setFilters({ ...filters, qualifiedOnly: e.target.checked })}
-                className="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600"
-              />
-              <span className={filters.qualifiedOnly ? 'text-green-400 font-medium' : 'text-gray-300'}>Qualified Only</span>
-            </label>
-
-            {!filters.qualifiedOnly && (
-              <>
-                {/* Trend Filter */}
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400">Trend:</span>
-                  <select
-                    value={filters.trend}
-                    onChange={(e) => setFilters({ ...filters, trend: e.target.value as Filters['trend'] })}
-                    className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 text-xs"
-                  >
-                    <option value="all">All</option>
-                    <option value="Uptrend">Uptrend</option>
-                    <option value="Flat">Flat</option>
-                    <option value="Declining">Declining</option>
-                  </select>
-                </div>
-
-                {/* Boolean Filters */}
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filters.pullbackInRange}
-                    onChange={(e) => setFilters({ ...filters, pullbackInRange: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600"
-                  />
-                  <span className="text-gray-300">Pullback 5-8%</span>
-                </label>
-
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filters.bounceOk}
-                    onChange={(e) => setFilters({ ...filters, bounceOk: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600"
-                  />
-                  <span className="text-gray-300">Bounce OK</span>
-                </label>
-
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filters.aboveSma200}
-                    onChange={(e) => setFilters({ ...filters, aboveSma200: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600"
-                  />
-                  <span className="text-gray-300">Above SMA200</span>
-                </label>
-
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filters.notExtended}
-                    onChange={(e) => setFilters({ ...filters, notExtended: e.target.checked })}
-                    className="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600"
-                  />
-                  <span className="text-gray-300">Not Extended</span>
-                </label>
-              </>
+        <div>
+          <h1 className="text-xl font-bold text-white">Opportunities</h1>
+          <span className="text-sm text-gray-400">
+            {totalQualifiedCount !== null ? (
+              <>{totalQualifiedCount} qualified, {qualifiedOpportunities.length} shown</>
+            ) : (
+              <>{qualifiedOpportunities.length} shown</>
             )}
-
-            {/* Min Score */}
-            <div className="flex items-center gap-2">
-              <span className="text-gray-400">Min Score:</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={filters.minScore}
-                onChange={(e) => setFilters({ ...filters, minScore: Number(e.target.value) || 0 })}
-                className="bg-gray-700 text-white px-2 py-1 rounded border border-gray-600 text-xs w-16"
-              />
-            </div>
-
-            {/* Reset */}
-            <button
-              onClick={() => setFilters({ qualifiedOnly: true, trend: 'all', pullbackInRange: false, bounceOk: false, aboveSma200: false, notExtended: false, minScore: 0 })}
-              className="text-gray-400 hover:text-white text-xs underline"
-            >
-              Reset
-            </button>
-          </div>
+          </span>
         </div>
-      )}
+        <button
+          onClick={handleScan}
+          disabled={scanning}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded transition-colors"
+        >
+          {scanning ? 'Scanning...' : 'Scan'}
+        </button>
+      </div>
 
       {error && (
         <div className="bg-red-500/10 border border-red-500 text-red-500 p-2 rounded text-sm">{error}</div>
@@ -420,12 +363,12 @@ export default function OpportunitiesPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2 max-h-[80vh] overflow-y-auto">
-          {filteredOpportunities.length === 0 ? (
+          {qualifiedOpportunities.length === 0 ? (
             <div className="bg-gray-800 p-6 rounded text-center text-gray-400 text-sm">
               {opportunities.length === 0 ? 'No opportunities. Click Scan.' : 'No matches. Adjust filters.'}
             </div>
           ) : (
-            filteredOpportunities.map((opp) => (
+            qualifiedOpportunities.map((opp) => (
               <div
                 key={opp.id}
                 onClick={() => setSelected(opp)}
@@ -454,7 +397,27 @@ export default function OpportunitiesPage() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-bold text-white">{opp.symbol}</span>
-                        <span className="text-gray-400 text-sm">${fmt(opp.currentPrice)}</span>
+                        <span
+                          className={`text-sm font-mono px-1 rounded transition-all duration-500 ${
+                            priceFlash[opp.symbol] === 'up'
+                              ? 'bg-green-500/30 text-green-300'
+                              : priceFlash[opp.symbol] === 'down'
+                              ? 'bg-red-500/30 text-red-300'
+                              : 'text-white'
+                          }`}
+                        >
+                          ${fmt(livePrices[opp.symbol]?.price ?? opp.currentPrice)}
+                        </span>
+                        {livePrices[opp.symbol]?.changePercent !== undefined && (
+                          <span className={`text-xs font-mono ${
+                            (livePrices[opp.symbol]?.changePercent ?? 0) >= 0
+                              ? 'text-green-400'
+                              : 'text-red-400'
+                          }`}>
+                            {(livePrices[opp.symbol]?.changePercent ?? 0) >= 0 ? '+' : ''}
+                            {(livePrices[opp.symbol]?.changePercent ?? 0).toFixed(2)}%
+                          </span>
+                        )}
                         {openPositionSymbols.has(opp.symbol) && (
                           <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded border border-yellow-500/30">OPEN</span>
                         )}
@@ -506,7 +469,29 @@ export default function OpportunitiesPage() {
                       {selected.companyName}
                     </div>
                   )}
-                  <div className="text-lg font-mono text-white mt-1">${fmt(selected.currentPrice)}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span
+                      className={`text-lg font-mono px-1 rounded transition-all duration-500 ${
+                        priceFlash[selected.symbol] === 'up'
+                          ? 'bg-green-500/30 text-green-300'
+                          : priceFlash[selected.symbol] === 'down'
+                          ? 'bg-red-500/30 text-red-300'
+                          : 'text-white'
+                      }`}
+                    >
+                      ${fmt(livePrices[selected.symbol]?.price ?? selected.currentPrice)}
+                    </span>
+                    {livePrices[selected.symbol]?.changePercent !== undefined && (
+                      <span className={`text-sm font-mono ${
+                        (livePrices[selected.symbol]?.changePercent ?? 0) >= 0
+                          ? 'text-green-400'
+                          : 'text-red-400'
+                      }`}>
+                        {(livePrices[selected.symbol]?.changePercent ?? 0) >= 0 ? '+' : ''}
+                        {(livePrices[selected.symbol]?.changePercent ?? 0).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               {openPositionSymbols.has(selected.symbol) && (
@@ -660,8 +645,10 @@ export default function OpportunitiesPage() {
                     <div className="text-white font-mono text-lg font-bold">{positionCalc.shares || 0}</div>
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
-                    <div className="text-gray-500 text-xs">Entry Price</div>
-                    <div className="text-white font-mono">${positionCalc.entry?.toFixed(2) || '0.00'}</div>
+                    <div className="text-gray-500 text-xs">Live Price</div>
+                    <div className="text-green-400 font-mono">
+                      ${(livePrices[positionCalc.symbol]?.price ?? positionCalc.entry)?.toFixed(2) || '0.00'}
+                    </div>
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Stop Price</div>
@@ -702,9 +689,19 @@ export default function OpportunitiesPage() {
                     <div className="text-gray-500 text-xs">Shares</div>
                     <div className="text-white font-mono text-lg font-bold">{positionCalc.shares}</div>
                   </div>
-                  <div className="bg-gray-700/50 p-2 rounded">
-                    <div className="text-gray-500 text-xs">Entry Price</div>
-                    <div className="text-white font-mono">${positionCalc.entry?.toFixed(2) || '0.00'}</div>
+                  <div className="bg-green-500/20 border border-green-500/50 p-2 rounded">
+                    <div className="text-green-400 text-xs">Live Price</div>
+                    <div className="text-green-400 font-mono font-bold">
+                      ${(livePrices[positionCalc.symbol]?.price ?? positionCalc.entry)?.toFixed(2) || '0.00'}
+                      {livePrices[positionCalc.symbol]?.changePercent !== undefined && (
+                        <span className={`text-xs ml-1 ${
+                          (livePrices[positionCalc.symbol]?.changePercent ?? 0) >= 0 ? 'text-green-300' : 'text-red-400'
+                        }`}>
+                          {(livePrices[positionCalc.symbol]?.changePercent ?? 0) >= 0 ? '+' : ''}
+                          {(livePrices[positionCalc.symbol]?.changePercent ?? 0).toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="bg-gray-700/50 p-2 rounded">
                     <div className="text-gray-500 text-xs">Stop Price</div>
@@ -727,22 +724,75 @@ export default function OpportunitiesPage() {
                     <div className="text-white font-mono font-bold">${positionCalc.max_loss_usd?.toLocaleString()}</div>
                   </div>
                 </div>
-
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={handleCancelApprove}
-                    className="flex-1 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmApprove}
-                    disabled={runningSimulation}
-                    className="flex-1 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-800 text-white rounded font-medium"
-                  >
-                    {runningSimulation ? 'Simulating...' : simulationConfig?.enabled ? 'Run Simulation' : 'Confirm Trade'}
-                  </button>
+                <div className="text-xs text-gray-400 text-center">
+                  Trade will execute at live market price
                 </div>
+
+                {/* Two-step confirmation */}
+                {!showFinalConfirm ? (
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={handleCancelApprove}
+                      className="flex-1 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded font-medium"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => setShowFinalConfirm(true)}
+                      disabled={runningSimulation}
+                      className="flex-1 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-800 text-white rounded font-medium"
+                    >
+                      {simulationConfig?.enabled ? 'Run Simulation' : 'Confirm Trade'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-2">
+                    {/* Final confirmation prompt */}
+                    <div className="bg-yellow-500/10 border border-yellow-500/50 rounded p-3 text-center">
+                      <div className="text-yellow-400 font-medium">
+                        {executingTrade ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            <span>Executing trade on IB Gateway...</span>
+                          </div>
+                        ) : (
+                          'Are you sure you want to open this position?'
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setShowFinalConfirm(false)}
+                        disabled={executingTrade}
+                        className="flex-1 py-2 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded font-medium"
+                      >
+                        No
+                      </button>
+                      <button
+                        onClick={handleConfirmApprove}
+                        disabled={executingTrade || runningSimulation}
+                        className="flex-1 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white rounded font-medium flex items-center justify-center gap-2"
+                      >
+                        {executingTrade ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            <span>Executing...</span>
+                          </>
+                        ) : runningSimulation ? (
+                          'Simulating...'
+                        ) : (
+                          'Yes, Execute Trade'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -236,6 +236,38 @@ export class IBService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Get positions from the IB proxy (preferred method)
+   * Returns actual positions from IB Gateway
+   */
+  async getPositionsFromProxy(): Promise<IBPosition[]> {
+    try {
+      const response = await this.proxyFetch('/positions');
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch positions: ${response.status}`);
+      }
+
+      const data = await response.json() as Array<{
+        symbol: string;
+        position: number;
+        avgCost: number;
+        account: string;
+      }>;
+
+      return data.map(p => ({
+        symbol: p.symbol,
+        position: p.position,
+        avgCost: p.avgCost,
+        marketValue: 0,
+        unrealizedPnl: 0,
+      }));
+    } catch (err) {
+      this.logger.error(`Failed to get positions from proxy: ${(err as Error).message}`);
+      throw err;
+    }
+  }
+
   async placeBuyOrder(
     symbol: string,
     quantity: number,

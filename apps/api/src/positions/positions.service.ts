@@ -28,17 +28,109 @@ export class PositionsService {
   }
 
   async findOpen(): Promise<Position[]> {
-    const positions = await this.positionRepo.find({
-      where: { status: PositionStatus.OPEN },
-      order: { openedAt: 'DESC' },
-    });
+    // Fetch positions from IB as the source of truth
+    try {
+      return await this.findOpenFromIB();
+    } catch (err) {
+      this.logger.warn(`Failed to fetch from IB, falling back to database: ${(err as Error).message}`);
+      // Fallback to database-only mode
+      const positions = await this.positionRepo.find({
+        where: { status: PositionStatus.OPEN },
+        order: { openedAt: 'DESC' },
+      });
+      if (positions.length > 0) {
+        await this.refreshPositionPrices(positions);
+      }
+      return positions;
+    }
+  }
 
-    // Fetch live prices for all positions and update them
-    if (positions.length > 0) {
-      await this.refreshPositionPrices(positions);
+  /**
+   * Fetch positions from IB Gateway and merge with database metadata
+   * IB is the SOURCE OF TRUTH for:
+   *   - shares (position count)
+   *   - entryPrice (avgCost = average cost basis)
+   * Polygon provides:
+   *   - currentPrice (live market price)
+   * Database provides:
+   *   - stopPrice, trailPercent, openedAt (metadata)
+   */
+  async findOpenFromIB(): Promise<Position[]> {
+    // Get IB positions - this is the source of truth
+    const ibPositions = await this.ibService.getPositionsFromProxy();
+
+    // Get database positions for metadata (stop price, trail percent, etc.)
+    const dbPositions = await this.positionRepo.find({
+      where: { status: PositionStatus.OPEN },
+    });
+    const dbMap = new Map(dbPositions.map(p => [p.symbol, p]));
+
+    const mergedPositions: Position[] = [];
+
+    // Fetch live prices for all symbols in parallel
+    const symbols = ibPositions.map(p => p.symbol);
+    const livePrices = new Map<string, number>();
+
+    await Promise.all(symbols.map(async (symbol) => {
+      try {
+        const quote = await this.polygonService.getQuote(symbol);
+        livePrices.set(symbol, quote.price);
+      } catch {
+        // Will fallback to avgCost if Polygon fails
+      }
+    }));
+
+    for (const ibPos of ibPositions) {
+      const dbPos = dbMap.get(ibPos.symbol);
+      const livePrice = livePrices.get(ibPos.symbol);
+
+      if (dbPos) {
+        // IB is authoritative for shares and entry price
+        dbPos.shares = Math.round(ibPos.position);
+        dbPos.entryPrice = ibPos.avgCost; // IB's avgCost IS the entry price
+
+        // Polygon is authoritative for current price
+        if (livePrice !== undefined) {
+          dbPos.currentPrice = livePrice;
+          if (livePrice > (dbPos.highestPrice || 0)) {
+            dbPos.highestPrice = livePrice;
+          }
+        } else {
+          // Fallback: use entry price if no live price available
+          dbPos.currentPrice = ibPos.avgCost;
+        }
+
+        mergedPositions.push(dbPos);
+        dbMap.delete(ibPos.symbol); // Mark as processed
+      } else {
+        // Position exists in IB but not in DB - create a virtual position
+        this.logger.warn(`Position ${ibPos.symbol} exists in IB but not in database`);
+
+        const currentPrice = livePrice ?? ibPos.avgCost;
+
+        const virtualPos = this.positionRepo.create({
+          id: `ib-${ibPos.symbol}`, // Temporary ID
+          symbol: ibPos.symbol,
+          shares: Math.round(ibPos.position),
+          entryPrice: ibPos.avgCost, // IB's avgCost IS the entry price
+          currentPrice,
+          highestPrice: currentPrice,
+          status: PositionStatus.OPEN,
+          trailPercent: 0,
+          openedAt: new Date(),
+        });
+        mergedPositions.push(virtualPos);
+      }
     }
 
-    return positions;
+    // Log any DB positions that aren't in IB (stale - should be closed)
+    for (const [symbol] of dbMap) {
+      this.logger.warn(`Position ${symbol} exists in database but NOT in IB - marking as stale`);
+    }
+
+    return mergedPositions.sort((a, b) =>
+      new Date(b.openedAt || 0).getTime() - new Date(a.openedAt || 0).getTime()
+    );
   }
 
   /**
@@ -108,9 +200,17 @@ export class PositionsService {
     return this.positionRepo.save(position);
   }
 
-  async closePosition(id: string): Promise<Position | null> {
+  async closePosition(id: string): Promise<{
+    success: boolean;
+    error?: string;
+    position?: Position;
+    pnl?: number;
+    pnlPercent?: number;
+  }> {
     const position = await this.positionRepo.findOne({ where: { id } });
-    if (!position) return null;
+    if (!position) {
+      return { success: false, error: 'Position not found' };
+    }
 
     this.logger.log(`Closing position: ${position.shares} shares of ${position.symbol}`);
 
@@ -135,15 +235,47 @@ export class PositionsService {
       }
 
       // Place sell order to close the position
-      const sellOrderId = await this.ibService.placeSellOrder(position.symbol, position.shares);
-      this.logger.log(`Placed sell order ${sellOrderId} to close ${position.symbol}`);
+      let sellOrderId: number;
+      try {
+        sellOrderId = await this.ibService.placeSellOrder(position.symbol, position.shares);
+        this.logger.log(`Placed sell order ${sellOrderId} to close ${position.symbol}`);
+      } catch (sellErr) {
+        const errorMsg = (sellErr as Error).message;
+        this.logger.error(`Failed to place sell order for ${position.symbol}: ${errorMsg}`);
+        return { success: false, error: `IB sell order failed: ${errorMsg}` };
+      }
 
-      // Update position status
+      // CRITICAL: Verify the position is closed in IB before updating database
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      let ibCloseVerified = false;
+      try {
+        const ibPositions = await this.ibService.getPositionsFromProxy();
+        const ibPosition = ibPositions.find(p => p.symbol === position.symbol);
+
+        if (!ibPosition || ibPosition.position === 0) {
+          ibCloseVerified = true;
+          this.logger.log(`IB VERIFIED: ${position.symbol} position closed`);
+        } else {
+          this.logger.warn(`IB still shows ${ibPosition.position} shares of ${position.symbol}`);
+        }
+      } catch (verifyErr) {
+        this.logger.error(`Failed to verify IB close: ${(verifyErr as Error).message}`);
+      }
+
+      if (!ibCloseVerified) {
+        return {
+          success: false,
+          error: `Sell order placed (ID: ${sellOrderId}) but position still exists in IB. Check IB Gateway manually.`,
+        };
+      }
+
+      // IB CONFIRMED CLOSED - Now safe to update the database
       position.status = PositionStatus.CLOSED;
       position.closedAt = new Date();
       const savedPosition = await this.positionRepo.save(position);
 
-      // Calculate P&L for logging
+      // Calculate P&L
       const entryValue = Number(position.shares) * Number(position.entryPrice);
       const exitValue = Number(position.shares) * Number(position.currentPrice);
       const pnl = exitValue - entryValue;
@@ -173,11 +305,96 @@ export class PositionsService {
         details: { exitPrice: position.currentPrice, pnl },
       });
 
-      return savedPosition;
+      return {
+        success: true,
+        position: savedPosition,
+        pnl,
+        pnlPercent,
+      };
     } catch (error) {
-      this.logger.error(`Failed to close position ${position.symbol}: ${(error as Error).message}`);
-      throw error;
+      const errorMsg = (error as Error).message;
+      this.logger.error(`Failed to close position ${position.symbol}: ${errorMsg}`);
+      return { success: false, error: `Failed to close position: ${errorMsg}` };
     }
+  }
+
+  /**
+   * Sync missing IB positions to the database
+   * For positions that exist in IB but not in the database
+   */
+  async syncMissingFromIB(): Promise<{ synced: string[]; errors: string[] }> {
+    const synced: string[] = [];
+    const errors: string[] = [];
+
+    try {
+      const ibPositions = await this.ibService.getPositionsFromProxy();
+      const dbPositions = await this.positionRepo.find({
+        where: { status: PositionStatus.OPEN },
+      });
+      const dbSymbols = new Set(dbPositions.map(p => p.symbol));
+
+      // Fetch live prices in parallel
+      const livePrices = new Map<string, number>();
+      await Promise.all(ibPositions.map(async (ibPos) => {
+        try {
+          const quote = await this.polygonService.getQuote(ibPos.symbol);
+          livePrices.set(ibPos.symbol, quote.price);
+        } catch {
+          // Will use avgCost as fallback
+        }
+      }));
+
+      for (const ibPos of ibPositions) {
+        if (!dbSymbols.has(ibPos.symbol) && ibPos.position > 0) {
+          this.logger.log(`Syncing IB position to database: ${ibPos.symbol}`);
+
+          const currentPrice = livePrices.get(ibPos.symbol) ?? ibPos.avgCost;
+          // Use a default stop of 5% below entry as starting point
+          const defaultStopPercent = 0.05;
+          const stopPrice = ibPos.avgCost * (1 - defaultStopPercent);
+
+          try {
+            const position = this.positionRepo.create({
+              symbol: ibPos.symbol,
+              shares: Math.round(ibPos.position),
+              entryPrice: ibPos.avgCost,
+              currentPrice,
+              highestPrice: currentPrice,
+              stopPrice,
+              trailPercent: defaultStopPercent * 100,
+              status: PositionStatus.OPEN,
+              openedAt: new Date(), // Approximate since we don't know actual open time
+            });
+
+            await this.positionRepo.save(position);
+
+            // Log activity
+            await this.activityRepo.save({
+              type: ActivityType.SYSTEM,
+              positionId: position.id,
+              symbol: ibPos.symbol,
+              message: `Synced IB position to database: ${Math.round(ibPos.position)} shares of ${ibPos.symbol}`,
+              details: {
+                source: 'ib_sync',
+                shares: Math.round(ibPos.position),
+                avgCost: ibPos.avgCost,
+              },
+            });
+
+            synced.push(ibPos.symbol);
+          } catch (saveErr) {
+            const errMsg = `Failed to save ${ibPos.symbol}: ${(saveErr as Error).message}`;
+            this.logger.error(errMsg);
+            errors.push(errMsg);
+          }
+        }
+      }
+    } catch (err) {
+      errors.push(`Failed to fetch IB positions: ${(err as Error).message}`);
+    }
+
+    this.logger.log(`Synced ${synced.length} positions from IB, ${errors.length} errors`);
+    return { synced, errors };
   }
 
   async getPositionStats(): Promise<{

@@ -10,18 +10,21 @@ module.exports = {
       max_restarts: 10,
       env: {
         NODE_ENV: 'development',
+        PORT: '3667',
       },
     },
     {
       name: 'tradeguard-web',
       cwd: './apps/web',
       script: 'npm',
-      args: 'run dev',
+      args: 'run start',
       watch: false,
       autorestart: true,
       max_restarts: 10,
+      kill_timeout: 5000,
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
+        PORT: '3666',
       },
     },
     {

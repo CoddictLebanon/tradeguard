@@ -8,6 +8,15 @@ import { ActivityLog, ActivityType } from '../entities/activity-log.entity';
 import { CircuitBreakerService } from '../safety/circuit-breaker.service';
 import { IBService } from '../ib/ib.service';
 import { PositionSizingService } from '../risk/position-sizing.service';
+import { PolygonService } from '../data/polygon.service';
+
+export interface TradeExecutionResult {
+  success: boolean;
+  error?: string;
+  positionId?: string;
+  shares?: number;
+  entryPrice?: number;
+}
 
 @Injectable()
 export class TradeExecutionService {
@@ -22,10 +31,16 @@ export class TradeExecutionService {
     private readonly ibService: IBService,
     private readonly positionSizing: PositionSizingService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly polygonService: PolygonService,
   ) {}
 
   @OnEvent('opportunity.approved')
   async handleOpportunityApproved(opportunity: Opportunity): Promise<void> {
+    // Event handler for backward compatibility - just delegates to executeOpportunityTrade
+    await this.executeOpportunityTrade(opportunity);
+  }
+
+  async executeOpportunityTrade(opportunity: Opportunity): Promise<TradeExecutionResult> {
     this.logger.log(`Processing approved opportunity: ${opportunity.symbol}`);
 
     try {
@@ -42,11 +57,20 @@ export class TradeExecutionService {
           symbol: opportunity.symbol,
           details: { reason: canTrade.reason, opportunity },
         });
-        return;
+        return { success: false, error: `Trade blocked: ${canTrade.reason}` };
       }
 
-      // Calculate position size using the position sizing service
-      const entryPrice = Number(opportunity.suggestedEntry) || Number(opportunity.currentPrice);
+      // Fetch LIVE price - don't use stale opportunity data
+      let entryPrice: number;
+      try {
+        const quote = await this.polygonService.getQuote(opportunity.symbol);
+        entryPrice = quote.price;
+        this.logger.log(`${opportunity.symbol}: Using live price $${entryPrice.toFixed(2)} (opportunity had $${opportunity.suggestedEntry})`);
+      } catch (err) {
+        // Fall back to opportunity price if quote fails
+        entryPrice = Number(opportunity.suggestedEntry) || Number(opportunity.currentPrice);
+        this.logger.warn(`${opportunity.symbol}: Could not fetch live price, using opportunity price $${entryPrice.toFixed(2)}`);
+      }
       const pullbackLow = Number(opportunity.factors?.pullbackLow) || entryPrice * 0.95;
 
       const positionCalc = this.positionSizing.calculateSwingPosition({
@@ -63,7 +87,7 @@ export class TradeExecutionService {
           symbol: opportunity.symbol,
           details: { reason: positionCalc.reason, positionCalc },
         });
-        return;
+        return { success: false, error: `Position sizing rejected: ${positionCalc.reason}` };
       }
 
       const shares = positionCalc.shares!;
@@ -73,7 +97,7 @@ export class TradeExecutionService {
 
       if (shares < 1) {
         this.logger.warn(`Cannot trade ${opportunity.symbol}: position too small (${shares} shares)`);
-        return;
+        return { success: false, error: 'Position too small (less than 1 share)' };
       }
 
       // Place buy order via IB (works for both paper and live mode)
@@ -88,63 +112,88 @@ export class TradeExecutionService {
         ibOrderId = await this.ibService.placeBuyOrder(opportunity.symbol, shares);
         this.logger.log(`Buy order placed: ${ibOrderId}`);
       } catch (orderError) {
-        this.logger.error(`Failed to place IB buy order: ${(orderError as Error).message}`);
-        await this.activityRepo.save({
-          type: ActivityType.TRADE_BLOCKED,
-          message: `Failed to place IB buy order for ${opportunity.symbol}: ${(orderError as Error).message}`,
-          symbol: opportunity.symbol,
-          details: { error: (orderError as Error).message, shares, entryPrice },
-        });
-        return; // Do NOT create position if IB buy order fails
+        const errorMsg = (orderError as Error).message;
+        this.logger.error(`Failed to place IB buy order: ${errorMsg}`);
+        return { success: false, error: `IB order failed: ${errorMsg}` };
       }
 
-      // Place trailing stop order via IB - MUST succeed
+      // CRITICAL: Verify the position exists in IB before writing to database
+      // Poll for position with retries to handle IB processing delay
+      const MAX_RETRIES = 6;
+      const RETRY_DELAY_MS = 2000;
+      let ibPositionVerified = false;
+      let actualShares = shares;
+      let actualAvgCost = entryPrice;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+
+        try {
+          const ibPositions = await this.ibService.getPositionsFromProxy();
+          const ibPosition = ibPositions.find(p => p.symbol === opportunity.symbol);
+
+          if (ibPosition && ibPosition.position > 0) {
+            ibPositionVerified = true;
+            actualShares = Math.round(ibPosition.position);
+            actualAvgCost = ibPosition.avgCost;
+            this.logger.log(`IB VERIFIED (attempt ${attempt}): ${opportunity.symbol} - ${actualShares} shares @ $${actualAvgCost.toFixed(2)}`);
+            break;
+          } else {
+            this.logger.debug(`IB position not found for ${opportunity.symbol} (attempt ${attempt}/${MAX_RETRIES})`);
+          }
+        } catch (verifyErr) {
+          this.logger.warn(`Failed to verify IB position (attempt ${attempt}): ${(verifyErr as Error).message}`);
+        }
+      }
+
+      if (!ibPositionVerified) {
+        // Position not confirmed in IB after all retries - do NOT write to database
+        this.logger.error(`IB position verification failed for ${opportunity.symbol} after ${MAX_RETRIES} attempts`);
+        return {
+          success: false,
+          error: `Order placed (ID: ${ibOrderId}) but position not confirmed in IB after ${MAX_RETRIES * RETRY_DELAY_MS / 1000}s. Check IB Gateway manually.`,
+        };
+      }
+
+      // Place trailing stop order via IB
       try {
         ibStopOrderId = await this.ibService.placeTrailingStopOrder(
           opportunity.symbol,
-          shares,
+          actualShares,
           trailPercent,
         );
         this.logger.log(`Trailing stop order placed: ${ibStopOrderId}`);
       } catch (stopError) {
         this.logger.error(`Failed to place IB stop order: ${(stopError as Error).message}`);
-        // Stop order failed but buy order succeeded - log warning but continue
-        // The position will be created without a stop order ID
-        await this.activityRepo.save({
-          type: ActivityType.SYSTEM,
-          message: `Warning: Buy order succeeded but stop order failed for ${opportunity.symbol}`,
-          symbol: opportunity.symbol,
-          details: { error: (stopError as Error).message, ibOrderId },
-        });
-        ibStopOrderId = 0; // Mark as no stop order
+        ibStopOrderId = 0; // Mark as no stop order but continue - position is real
       }
 
-      // Create the position - only reaches here if IB buy order succeeded
+      // IB CONFIRMED - Now safe to create the position in database
       const position = this.positionRepo.create({
         symbol: opportunity.symbol,
-        entryPrice,
-        shares,
+        entryPrice: actualAvgCost, // Use IB's actual fill price
+        shares: actualShares,
         stopPrice,
         trailPercent,
-        currentPrice: entryPrice,
-        highestPrice: entryPrice,
-        status: PositionStatus.OPEN,
-        openedAt: new Date(),
+        currentPrice: actualAvgCost,
+        highestPrice: actualAvgCost,
+        status: PositionStatus.OPEN, // Directly OPEN since IB confirmed
         ibOrderId: ibOrderId.toString(),
         ibStopOrderId: ibStopOrderId ? ibStopOrderId.toString() : undefined,
+        openedAt: new Date(),
       });
 
       await this.positionRepo.save(position);
 
-      // Log the activity
+      // Log the activity with IB's actual fill price
       await this.activityRepo.save({
         type: ActivityType.POSITION_OPENED,
         positionId: position.id,
         symbol: opportunity.symbol,
-        message: `Opened ${tradingMode} position: ${shares} shares of ${opportunity.symbol} at $${entryPrice.toFixed(2)}`,
+        message: `Opened ${tradingMode} position: ${actualShares} shares of ${opportunity.symbol} at $${actualAvgCost.toFixed(2)}`,
         details: {
-          shares,
-          entryPrice,
+          shares: actualShares,
+          entryPrice: actualAvgCost, // IB's actual fill price
           stopPrice,
           trailPercent,
           opportunityScore: opportunity.score,
@@ -158,22 +207,31 @@ export class TradeExecutionService {
       this.eventEmitter.emit('activity.trade', {
         type: ActivityType.POSITION_OPENED,
         symbol: opportunity.symbol,
-        details: { entryPrice, stopPrice, shares },
+        details: { entryPrice: actualAvgCost, stopPrice, shares: actualShares },
       });
 
       this.logger.log(
-        `[${tradingMode.toUpperCase()}] Position opened: ${shares} ${opportunity.symbol} @ $${entryPrice.toFixed(2)} ` +
+        `[${tradingMode.toUpperCase()}] Position opened: ${actualShares} ${opportunity.symbol} @ $${actualAvgCost.toFixed(2)} ` +
         `(Stop: $${stopPrice.toFixed(2)}, Trail: ${trailPercent}%) [Orders: ${ibOrderId}, ${ibStopOrderId}]`
       );
 
+      return {
+        success: true,
+        positionId: position.id,
+        shares: actualShares,
+        entryPrice: actualAvgCost, // Return IB's actual fill price
+      };
+
     } catch (error) {
-      this.logger.error(`Failed to execute trade for ${opportunity.symbol}: ${(error as Error).message}`);
+      const errorMsg = (error as Error).message;
+      this.logger.error(`Failed to execute trade for ${opportunity.symbol}: ${errorMsg}`);
       await this.activityRepo.save({
         type: ActivityType.SYSTEM,
         message: `Trade execution failed for ${opportunity.symbol}`,
         symbol: opportunity.symbol,
-        details: { error: (error as Error).message },
+        details: { error: errorMsg },
       });
+      return { success: false, error: `Trade execution failed: ${errorMsg}` };
     }
   }
 }

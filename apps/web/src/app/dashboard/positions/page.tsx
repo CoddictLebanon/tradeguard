@@ -25,12 +25,25 @@ interface Position extends Omit<PositionRaw, 'currentPrice'> {
   unrealizedPnlPercent: number;
 }
 
+interface CloseModalState {
+  isOpen: boolean;
+  position: Position | null;
+  isClosing: boolean;
+  error: string | null;
+}
+
 export default function PositionsPage() {
   const token = useAuthStore((state) => state.token);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
+  const [closeModal, setCloseModal] = useState<CloseModalState>({
+    isOpen: false,
+    position: null,
+    isClosing: false,
+    error: null,
+  });
 
   const fetchPositions = async () => {
     if (!token) return;
@@ -65,14 +78,68 @@ export default function PositionsPage() {
     return () => clearInterval(interval);
   }, [token]);
 
-  const handleClose = async (id: string, e: React.MouseEvent) => {
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Open confirmation modal
+  const handleCloseClick = (pos: Position, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!token || !confirm('Close this position?')) return;
+    setCloseModal({
+      isOpen: true,
+      position: pos,
+      isClosing: false,
+      error: null,
+    });
+  };
+
+  // Cancel and close the modal
+  const handleCancelClose = () => {
+    if (closeModal.isClosing) return; // Don't allow cancel while closing
+    setCloseModal({
+      isOpen: false,
+      position: null,
+      isClosing: false,
+      error: null,
+    });
+  };
+
+  // Execute the actual close operation
+  const handleConfirmClose = async () => {
+    const pos = closeModal.position;
+    if (!token || !pos) return;
+
+    setCloseModal(prev => ({ ...prev, isClosing: true, error: null }));
+
     try {
-      await api.closePosition(token, id);
-      await fetchPositions();
+      const result = await api.closePosition(token, pos.id);
+      if (result.success) {
+        const pnlSign = (result.pnl ?? 0) >= 0 ? '+' : '';
+        setSuccessMessage(
+          `${pos.symbol} closed: ${pnlSign}$${(result.pnl ?? 0).toFixed(2)} (${pnlSign}${(result.pnlPercent ?? 0).toFixed(2)}%)`
+        );
+        setTimeout(() => setSuccessMessage(null), 8000);
+        // Close modal on success
+        setCloseModal({
+          isOpen: false,
+          position: null,
+          isClosing: false,
+          error: null,
+        });
+        await fetchPositions();
+      } else {
+        // Show error in modal
+        setCloseModal(prev => ({
+          ...prev,
+          isClosing: false,
+          error: result.error || 'Failed to close position with Interactive Brokers',
+        }));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to close position');
+      // Show error in modal
+      setCloseModal(prev => ({
+        ...prev,
+        isClosing: false,
+        error: err instanceof Error ? err.message : 'Failed to close position',
+      }));
     }
   };
 
@@ -93,6 +160,12 @@ export default function PositionsPage() {
           Total: {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
         </div>
       </div>
+
+      {successMessage && (
+        <div className="bg-green-500/10 border border-green-500 text-green-500 p-4 rounded">
+          {successMessage}
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-500/10 border border-red-500 text-red-500 p-4 rounded">
@@ -123,7 +196,8 @@ export default function PositionsPage() {
             <tbody>
               {positions.map((pos) => {
                 const capital = pos.shares * Number(pos.entryPrice);
-                const stopPct = ((Number(pos.entryPrice) - Number(pos.stopPrice)) / Number(pos.entryPrice)) * 100;
+                const hasStop = pos.stopPrice != null && !isNaN(Number(pos.stopPrice));
+                const stopPct = hasStop ? ((Number(pos.entryPrice) - Number(pos.stopPrice)) / Number(pos.entryPrice)) * 100 : null;
                 return (
                   <tr
                     key={pos.id}
@@ -135,16 +209,16 @@ export default function PositionsPage() {
                     <td className="py-4 px-4 text-right text-blue-400 font-medium tabular-nums">${capital.toLocaleString()}</td>
                     <td className="py-4 px-4 text-right text-gray-300 tabular-nums">${Number(pos.entryPrice).toFixed(2)}</td>
                     <td className="py-4 px-4 text-right text-gray-300 tabular-nums">${pos.currentPrice.toFixed(2)}</td>
-                    <td className="py-4 px-4 text-right text-red-400 tabular-nums">${Number(pos.stopPrice).toFixed(2)}</td>
-                    <td className="py-4 px-4 text-right text-yellow-400 tabular-nums">{stopPct.toFixed(2)}%</td>
+                    <td className="py-4 px-4 text-right text-red-400 tabular-nums">{hasStop ? `$${Number(pos.stopPrice).toFixed(2)}` : '-'}</td>
+                    <td className="py-4 px-4 text-right text-yellow-400 tabular-nums">{stopPct !== null ? `${stopPct.toFixed(2)}%` : '-'}</td>
                     <td className={`py-4 px-4 text-right font-medium tabular-nums ${pos.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                       {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
                       <span className="text-xs ml-1">({pos.unrealizedPnlPercent.toFixed(1)}%)</span>
                     </td>
                     <td className="py-4 px-4 text-right">
                       <button
-                        onClick={(e) => handleClose(pos.id, e)}
-                        className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
+                        onClick={(e) => handleCloseClick(pos, e)}
+                        className="px-3 py-1 text-white text-sm rounded bg-red-600 hover:bg-red-700"
                       >
                         Close
                       </button>
@@ -161,6 +235,123 @@ export default function PositionsPage() {
         position={selectedPosition}
         onClose={() => setSelectedPosition(null)}
       />
+
+      {/* Close Position Confirmation Modal */}
+      {closeModal.isOpen && closeModal.position && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-md w-full mx-4 shadow-2xl">
+            {closeModal.isClosing ? (
+              // Loading state
+              <div className="text-center py-4">
+                <div className="inline-flex items-center justify-center w-16 h-16 mb-4">
+                  <div className="w-12 h-12 border-4 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">
+                  Closing Position...
+                </h3>
+                <p className="text-gray-400">
+                  Waiting for Interactive Brokers confirmation
+                </p>
+                <p className="text-gray-500 text-sm mt-2">
+                  Selling {closeModal.position.shares} shares of {closeModal.position.symbol}
+                </p>
+              </div>
+            ) : closeModal.error ? (
+              // Error state
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                    <span className="text-2xl">✗</span>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-white">
+                      Failed to Close Position
+                    </h3>
+                    <p className="text-gray-400 text-sm">
+                      {closeModal.position.symbol}
+                    </p>
+                  </div>
+                </div>
+                <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 mb-6">
+                  <p className="text-red-400 text-sm">{closeModal.error}</p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleCancelClose}
+                    className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmClose}
+                    className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // Confirmation state
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 bg-yellow-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                    <span className="text-2xl">⚠</span>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-white">
+                      Close Position?
+                    </h3>
+                    <p className="text-gray-400 text-sm">
+                      This action cannot be undone
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-gray-900/50 rounded-lg p-4 mb-6 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Symbol</span>
+                    <span className="text-white font-medium">{closeModal.position.symbol}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Shares</span>
+                    <span className="text-white">{closeModal.position.shares}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Entry Price</span>
+                    <span className="text-white">${Number(closeModal.position.entryPrice).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Current Price</span>
+                    <span className="text-white">${closeModal.position.currentPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-gray-700 pt-2 mt-2">
+                    <span className="text-gray-400">Unrealized P/L</span>
+                    <span className={`font-medium ${closeModal.position.unrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {closeModal.position.unrealizedPnl >= 0 ? '+' : ''}${closeModal.position.unrealizedPnl.toFixed(2)}
+                      <span className="text-xs ml-1">({closeModal.position.unrealizedPnlPercent.toFixed(1)}%)</span>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleCancelClose}
+                    className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmClose}
+                    className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Close Position
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -7,6 +6,12 @@ import { WatchlistItem } from '../entities/watchlist.entity';
 import { Opportunity, OpportunityStatus } from '../entities/opportunity.entity';
 import { BuyQualificationService, QualificationResult } from '../strategy/buy-qualification.service';
 import { PolygonService } from '../data/polygon.service';
+import { TradeExecutionService, TradeExecutionResult } from '../strategy/trade-execution.service';
+
+export interface ApproveResult {
+  opportunity: Opportunity | null;
+  trade?: TradeExecutionResult;
+}
 
 @Injectable()
 export class ScannerService {
@@ -26,24 +31,9 @@ export class ScannerService {
     private readonly buyQualificationService: BuyQualificationService,
     private readonly polygonService: PolygonService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => TradeExecutionService))
+    private readonly tradeExecutionService: TradeExecutionService,
   ) {}
-
-  // Run every 5 minutes during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)
-  @Cron('*/5 9-16 * * 1-5', { timeZone: 'America/New_York' })
-  async scheduledScan() {
-    const now = new Date();
-    const hours = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
-    const minutes = now.toLocaleString('en-US', { timeZone: 'America/New_York', minute: 'numeric' });
-
-    const hour = parseInt(hours, 10);
-    const minute = parseInt(minutes, 10);
-
-    // More precise market hours check
-    if (hour === 9 && minute < 30) return;
-    if (hour >= 16) return;
-
-    await this.scanWatchlist();
-  }
 
   async scanWatchlist(asOfDate?: string): Promise<{ skipped: boolean; opportunities: Opportunity[]; scannedCount?: number; message?: string }> {
     // Check if previous scan is stuck (timed out)
@@ -108,8 +98,9 @@ export class ScannerService {
         this.logger.debug(`${f.symbol} failed: ${f.error}`);
       }
 
-      // Clear all existing pending opportunities to get fresh results each scan
-      await this.opportunityRepo.delete({ status: OpportunityStatus.PENDING });
+      // Clear all existing opportunities to get fresh results each scan
+      // (both pending and approved - opportunities are transient per scan)
+      await this.opportunityRepo.clear();
 
       // Fetch ticker details - use cache when available
       const tickerDetailsMap = new Map<string, { name?: string; logo_url?: string; icon_url?: string }>();
@@ -273,15 +264,17 @@ export class ScannerService {
     return this.opportunityRepo.findOne({ where: { id } });
   }
 
-  async approveOpportunity(id: string): Promise<Opportunity | null> {
+  async approveOpportunity(id: string): Promise<ApproveResult> {
     const opportunity = await this.opportunityRepo.findOne({ where: { id } });
-    if (!opportunity) return null;
+    if (!opportunity) return { opportunity: null };
 
     opportunity.status = OpportunityStatus.APPROVED;
     await this.opportunityRepo.save(opportunity);
 
-    this.eventEmitter.emit('opportunity.approved', opportunity);
-    return opportunity;
+    // Execute trade directly and return result (don't emit event to avoid duplicate execution)
+    const tradeResult = await this.tradeExecutionService.executeOpportunityTrade(opportunity);
+
+    return { opportunity, trade: tradeResult };
   }
 
   async rejectOpportunity(id: string): Promise<Opportunity | null> {

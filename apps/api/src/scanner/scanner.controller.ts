@@ -2,6 +2,7 @@ import { Controller, Get, Post, Delete, Param, Body, UseGuards, Query, BadReques
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ScannerService } from './scanner.service';
 import { PositionSizingService } from '../risk/position-sizing.service';
+import { PolygonService } from '../data/polygon.service';
 
 function validateAsOfDate(asOfDate: string | undefined): void {
   if (!asOfDate) return;
@@ -33,6 +34,7 @@ export class ScannerController {
   constructor(
     private readonly scannerService: ScannerService,
     private readonly positionSizingService: PositionSizingService,
+    private readonly polygonService: PolygonService,
   ) {}
 
   @Get('opportunities')
@@ -55,7 +57,16 @@ export class ScannerController {
   @Post('opportunities/:id/approve')
   async approveOpportunity(@Param('id') id: string) {
     const result = await this.scannerService.approveOpportunity(id);
-    return { success: !!result };
+    if (!result.opportunity) {
+      return { success: false, error: 'Opportunity not found' };
+    }
+    return {
+      success: result.trade?.success ?? false,
+      error: result.trade?.error,
+      positionId: result.trade?.positionId,
+      shares: result.trade?.shares,
+      entryPrice: result.trade?.entryPrice,
+    };
   }
 
   @Post('opportunities/:id/reject')
@@ -138,5 +149,31 @@ export class ScannerController {
   ) {
     await this.positionSizingService.updateAccountConfig(body);
     return { success: true };
+  }
+
+  // Get live quotes for multiple symbols (for real-time price updates)
+  // Uses batch API to minimize Polygon API calls (1 call for all symbols)
+  @Post('quotes')
+  async getQuotes(@Body() body: { symbols: string[] }) {
+    const { symbols } = body;
+
+    if (!symbols || symbols.length === 0) {
+      return {};
+    }
+
+    const quotes: Record<string, { price: number; change?: number; changePercent?: number }> = {};
+
+    // Use batch endpoint - single API call for all symbols
+    const batchQuotes = await this.polygonService.getQuotesBatch(symbols);
+
+    for (const [symbol, quote] of batchQuotes) {
+      quotes[symbol] = {
+        price: quote.price,
+        change: quote.change,
+        changePercent: quote.changePercent,
+      };
+    }
+
+    return quotes;
   }
 }

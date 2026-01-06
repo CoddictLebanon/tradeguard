@@ -78,7 +78,12 @@ export class PositionsController {
   @Post(':id/close')
   async closePosition(@Param('id') id: string) {
     const result = await this.positionsService.closePosition(id);
-    return { success: !!result };
+    return {
+      success: result.success,
+      error: result.error,
+      pnl: result.pnl,
+      pnlPercent: result.pnlPercent,
+    };
   }
 
   @Put(':id/trail')
@@ -88,5 +93,10 @@ export class PositionsController {
   ) {
     const result = await this.positionsService.updateTrailPercent(id, body.trailPercent);
     return { success: !!result };
+  }
+
+  @Post('sync-ib')
+  async syncFromIB() {
+    return this.positionsService.syncMissingFromIB();
   }
 }
