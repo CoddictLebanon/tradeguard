@@ -601,4 +601,24 @@ export const api = {
     if (!res.ok) throw new Error('Failed to trigger reconciliation');
     return res.json();
   },
+
+  // Portfolio Performance
+  getPortfolioPerformance: async (token: string, period: string = '1m') => {
+    const apiBase = getApiBase();
+    const res = await fetch(`${apiBase}/portfolio/performance?period=${period}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch portfolio performance');
+    return res.json();
+  },
+
+  takePortfolioSnapshot: async (token: string) => {
+    const apiBase = getApiBase();
+    const res = await fetch(`${apiBase}/portfolio/snapshot`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to take snapshot');
+    return res.json();
+  },
 };
