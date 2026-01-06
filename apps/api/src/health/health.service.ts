@@ -115,13 +115,19 @@ export class HealthService {
   private async checkIBProxy(): Promise<ComponentHealth> {
     const start = Date.now();
     try {
-      const response = await fetch('http://localhost:5001/health', {
+      // IB Proxy runs on port 6680 (same as IBService uses)
+      const response = await fetch('http://localhost:6680/health', {
         signal: AbortSignal.timeout(5000),
       });
       const responseTime = Date.now() - start;
 
       if (response.ok) {
-        return { status: HealthStatus.HEALTHY, responseTime };
+        const data = await response.json() as { ib_connected?: boolean };
+        return {
+          status: HealthStatus.HEALTHY,
+          responseTime,
+          message: data.ib_connected ? 'Connected' : 'IB disconnected',
+        };
       }
       return { status: HealthStatus.CRITICAL, responseTime, message: 'Unhealthy response' };
     } catch (error) {
