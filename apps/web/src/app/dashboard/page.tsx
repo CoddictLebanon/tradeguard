@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { SystemHealth } from '@/components/SystemHealth';
+import { PortfolioChart } from '@/components/PortfolioChart';
+import { PositionsTable } from '@/components/PositionsTable';
 
 interface DashboardData {
   state: {
@@ -27,18 +29,6 @@ interface DashboardData {
   };
   tradingMode: 'paper' | 'live';
   canTrade: boolean;
-}
-
-function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const percent = Math.min(Math.abs(value) / max * 100, 100);
-  return (
-    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-      <div
-        className={`h-full ${color} transition-all duration-500`}
-        style={{ width: `${percent}%` }}
-      />
-    </div>
-  );
 }
 
 function StatCard({
@@ -81,7 +71,6 @@ function PnLCard({
 }) {
   const isPositive = value >= 0;
   const color = isPositive ? 'text-green-400' : 'text-red-400';
-  const barColor = isPositive ? 'bg-green-500' : 'bg-red-500';
 
   return (
     <div className="bg-gray-800 rounded-xl p-5 border border-gray-700/50">
@@ -92,9 +81,6 @@ function PnLCard({
       <p className={`text-3xl font-bold ${color}`}>
         {isPositive ? '+' : ''}${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </p>
-      <div className="mt-3">
-        <ProgressBar value={value} max={1000} color={barColor} />
-      </div>
     </div>
   );
 }
@@ -114,6 +100,15 @@ export default function DashboardPage() {
     details: { pnl?: number };
     positionId: string | null;
   }> | null>(null);
+  const [positions, setPositions] = useState<Array<{
+    id: string;
+    symbol: string;
+    shares: number;
+    entryPrice: number;
+    currentPrice: number;
+    stopPrice: number;
+    status: string;
+  }>>([]);
 
   useEffect(() => {
     if (!token) return;
@@ -136,7 +131,22 @@ export default function DashboardPage() {
       }
 
       // Fetch recent activity
-      api.getActivityFeed(token, { limit: 10 }).then((res) => setRecentActivity(res.items)).catch(() => {});
+      api.getActivityFeed(token, { limit: 5 }).then((res) => setRecentActivity(res.items)).catch(() => {});
+
+      // Fetch positions
+      api.getPositions(token).then(res => {
+        const positionsArray = Array.isArray(res) ? res : (res as any).positions || [];
+        const mapped = positionsArray.filter((p: any) => p.status === 'open').map((p: any) => ({
+          id: p.id,
+          symbol: p.symbol,
+          shares: p.shares,
+          entryPrice: p.entryPrice,
+          currentPrice: p.currentPrice || p.entryPrice,
+          stopPrice: p.currentStopPrice || p.entryPrice * 0.95,
+          status: p.status,
+        }));
+        setPositions(mapped);
+      }).catch(() => {});
     };
 
     fetchData();
@@ -220,6 +230,12 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Hero Performance Chart */}
+      <PortfolioChart />
+
+      {/* Positions Table */}
+      <PositionsTable positions={positions} />
 
       {/* Status Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
