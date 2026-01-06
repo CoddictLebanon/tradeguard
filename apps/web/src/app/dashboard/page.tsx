@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+import { SystemHealth } from '@/components/SystemHealth';
 
 interface DashboardData {
   state: {
@@ -101,6 +102,7 @@ function PnLCard({
 export default function DashboardPage() {
   const token = useAuthStore((state) => state.token);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [totalCapital, setTotalCapital] = useState<number>(100000); // Default fallback
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentActivity, setRecentActivity] = useState<Array<{
@@ -118,8 +120,14 @@ export default function DashboardPage() {
 
     const fetchData = async () => {
       try {
-        const result = await api.getDashboard(token);
-        setData(result);
+        const [dashboardResult, configResult] = await Promise.all([
+          api.getDashboard(token),
+          api.getAccountConfig(token).catch(() => null),
+        ]);
+        setData(dashboardResult);
+        if (configResult?.account?.totalCapital) {
+          setTotalCapital(configResult.account.totalCapital);
+        }
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load dashboard');
@@ -164,7 +172,7 @@ export default function DashboardPage() {
   if (!data) return null;
 
   const { state: tradingState, limits, canTrade } = data;
-  const capitalPercent = (tradingState.capitalDeployed / 100000) * 100; // Assuming 100k portfolio
+  const capitalPercent = (tradingState.capitalDeployed / totalCapital) * 100;
 
   function getRelativeTime(timestamp: string): string {
     const now = new Date();
@@ -273,7 +281,7 @@ export default function DashboardPage() {
                 />
               </div>
               <p className="text-gray-500 text-xs mt-2">
-                {capitalPercent.toFixed(1)}% of estimated portfolio utilized
+                {capitalPercent.toFixed(1)}% of ${totalCapital.toLocaleString()} portfolio utilized
               </p>
             </div>
           </div>
@@ -301,6 +309,14 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* System Health */}
+      <div>
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          System Health
+        </h2>
+        <SystemHealth />
       </div>
 
       {/* Recent Activity */}
