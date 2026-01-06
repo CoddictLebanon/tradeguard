@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Public } from '../auth/public.decorator';
 import { HealthService, SystemHealth } from './health.service';
 import { ReconciliationService, ReconciliationResult } from './reconciliation.service';
 
@@ -10,7 +11,8 @@ export class HealthController {
     private readonly reconciliationService: ReconciliationService,
   ) {}
 
-  // Public endpoint for uptime monitors
+  // Public endpoint for uptime monitors (no auth required)
+  @Public()
   @Get()
   async getQuickHealth(): Promise<{ status: string }> {
     const health = await this.healthService.runHealthChecks();

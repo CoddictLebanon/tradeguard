@@ -189,8 +189,9 @@ export class HealthService {
   private async checkCronJobs(): Promise<ComponentHealth> {
     try {
       const thirtyFiveMinutesAgo = new Date(Date.now() - 35 * 60 * 1000);
+      // Use quoted identifiers for camelCase column names (TypeORM default)
       const recentLogs = await this.healthLogRepo.query(
-        `SELECT * FROM cron_logs WHERE job_name = 'trailing_stop_reassessment' AND executed_at > $1 ORDER BY executed_at DESC LIMIT 1`,
+        `SELECT * FROM cron_logs WHERE "jobName" = 'trailing_stop_reassessment' AND "startedAt" > $1 ORDER BY "startedAt" DESC LIMIT 1`,
         [thirtyFiveMinutesAgo]
       );
 
@@ -198,14 +199,14 @@ export class HealthService {
         return {
           status: HealthStatus.HEALTHY,
           message: 'Running',
-          details: { lastRun: recentLogs[0].executed_at },
+          details: { lastRun: recentLogs[0].startedAt },
         };
       }
 
       // Check if multiple runs missed
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
       const olderLogs = await this.healthLogRepo.query(
-        `SELECT * FROM cron_logs WHERE job_name = 'trailing_stop_reassessment' AND executed_at > $1 ORDER BY executed_at DESC LIMIT 1`,
+        `SELECT * FROM cron_logs WHERE "jobName" = 'trailing_stop_reassessment' AND "startedAt" > $1 ORDER BY "startedAt" DESC LIMIT 1`,
         [twoHoursAgo]
       );
 
@@ -216,7 +217,7 @@ export class HealthService {
       return {
         status: HealthStatus.DEGRADED,
         message: 'Missed last run',
-        details: { lastRun: olderLogs[0]?.executed_at },
+        details: { lastRun: olderLogs[0]?.startedAt },
       };
     } catch (error) {
       return {
