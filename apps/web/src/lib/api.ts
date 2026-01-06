@@ -1,21 +1,13 @@
-// Dynamically determine API base URL based on current browser host
+// All API requests go through Next.js API routes (same origin, no CORS)
+// The Next.js server proxies to the actual backend internally
 function getApiBase(): string {
-  if (typeof window !== 'undefined') {
-    // In browser: use same host as the page, different port
-    const host = window.location.hostname;
-    return `http://${host}:3667`;
-  }
-  // Server-side or fallback
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3667';
+  // Always use relative URL - proxied through Next.js API routes
+  return '/api/proxy';
 }
 
 function getIBProxyBase(): string {
-  if (typeof window !== 'undefined') {
-    // In browser: use same host as the page, IB proxy port
-    const host = window.location.hostname;
-    return `http://${host}:6680`;
-  }
-  return 'http://localhost:6680';
+  // IB Proxy also goes through Next.js
+  return '/api/proxy/ib';
 }
 
 interface ApiOptions {
