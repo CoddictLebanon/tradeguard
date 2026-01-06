@@ -16,13 +16,10 @@ export class AddPortfolioSnapshots1736200000000 implements MigrationInterface {
       );
     `);
 
-    await queryRunner.query(`
-      CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(date);
-    `);
+    // Note: PostgreSQL automatically creates a unique index for the UNIQUE constraint on date column
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query('DROP INDEX IF EXISTS idx_portfolio_snapshots_date');
     await queryRunner.query('DROP TABLE IF EXISTS portfolio_snapshots');
   }
 }
