@@ -19,6 +19,7 @@ import { ActivityModule } from './activity/activity.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { CronLogModule } from './cron-log/cron-log.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { CronLogModule } from './cron-log/cron-log.module';
     SimulationModule,
     TelegramModule,
     CronLogModule,
+    HealthModule,
   ],
   controllers: [],
   providers: [],
