@@ -13,6 +13,8 @@ async function bootstrap() {
   // Allow CORS from multiple origins for remote access
   const allowedOrigins = [
     'http://localhost:3666',
+    'http://134.209.98.120:3666',  // Server external IP
+    'http://94.204.188.210:3666',  // Allowed client IP
     process.env.FRONTEND_URL,
   ].filter(Boolean);
 
@@ -28,6 +30,7 @@ async function bootstrap() {
       if (allowedOrigins.includes(origin) || localNetworkPattern.test(origin)) {
         callback(null, true);
       } else {
+        logger.warn(`CORS blocked origin: ${origin}`);
         callback(null, false);
       }
     },

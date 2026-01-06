@@ -78,11 +78,15 @@ export class IPGuard implements CanActivate {
     const clientIP = getClientIP(request);
     const path = request.path;
 
+    // Log ALL requests for debugging
+    this.logger.log(`[REQUEST] IP: ${clientIP} | Path: ${path}`);
+
     if (!isAllowedIP(clientIP)) {
       this.logger.warn(`[BLOCKED] Access denied for IP: ${clientIP} to ${path}`);
       throw new ForbiddenException('Access Denied');
     }
 
+    this.logger.log(`[ALLOWED] IP: ${clientIP}`);
     return true;
   }
 }
