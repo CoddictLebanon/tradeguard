@@ -20,6 +20,7 @@ import { SimulationModule } from './simulation/simulation.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { CronLogModule } from './cron-log/cron-log.module';
 import { HealthModule } from './health/health.module';
+import { PortfolioModule } from './portfolio/portfolio.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { HealthModule } from './health/health.module';
     TelegramModule,
     CronLogModule,
     HealthModule,
+    PortfolioModule,
   ],
   controllers: [],
   providers: [],
