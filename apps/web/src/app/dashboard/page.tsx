@@ -274,14 +274,24 @@ export default function DashboardPage() {
                 <span className="text-gray-400">Deployed Capital</span>
                 <span className="text-white">${tradingState.capitalDeployed.toLocaleString()}</span>
               </div>
-              <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
+              <div className="relative h-3 bg-gray-700 rounded-full overflow-hidden">
+                {/* Progress bar */}
                 <div
-                  className="h-full bg-blue-500 transition-all duration-500"
+                  className={`h-full transition-all duration-500 ${
+                    capitalPercent > limits.maxCapitalDeployedPercent ? 'bg-red-500' : 'bg-blue-500'
+                  }`}
                   style={{ width: `${Math.min(capitalPercent, 100)}%` }}
+                />
+                {/* Max limit threshold marker */}
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-red-500"
+                  style={{ left: `${limits.maxCapitalDeployedPercent}%` }}
+                  title={`Max limit: ${limits.maxCapitalDeployedPercent}%`}
                 />
               </div>
               <p className="text-gray-500 text-xs mt-2">
                 {capitalPercent.toFixed(1)}% of ${totalCapital.toLocaleString()} portfolio utilized
+                <span className="text-red-400 ml-2">(limit: {limits.maxCapitalDeployedPercent}%)</span>
               </p>
             </div>
           </div>
