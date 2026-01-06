@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { IPGuard } from './common/guards/ip.guard';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -54,6 +56,11 @@ import { PortfolioModule } from './portfolio/portfolio.module';
     PortfolioModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: IPGuard,
+    },
+  ],
 })
 export class AppModule {}
