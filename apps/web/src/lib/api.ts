@@ -3,10 +3,10 @@ function getApiBase(): string {
   if (typeof window !== 'undefined') {
     // In browser: use same host as the page, different port
     const host = window.location.hostname;
-    return `http://${host}:667`;
+    return `http://${host}:3667`;
   }
   // Server-side or fallback
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:667';
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3667';
 }
 
 function getIBProxyBase(): string {
@@ -126,7 +126,13 @@ export const api = {
     }>>('/scanner/opportunities', { token }),
 
   approveOpportunity: (token: string, id: string) =>
-    apiRequest<{ success: boolean }>(`/scanner/opportunities/${id}/approve`, {
+    apiRequest<{
+      success: boolean;
+      error?: string;
+      positionId?: string;
+      shares?: number;
+      entryPrice?: number;
+    }>(`/scanner/opportunities/${id}/approve`, {
       method: 'POST',
       token,
     }),
@@ -136,6 +142,16 @@ export const api = {
       method: 'POST',
       token,
     }),
+
+  getLiveQuotes: (token: string, symbols: string[]) =>
+    apiRequest<Record<string, { price: number; change?: number; changePercent?: number }>>(
+      '/scanner/quotes',
+      {
+        method: 'POST',
+        token,
+        body: { symbols },
+      }
+    ),
 
   calculatePositionSize: (token: string, id: string) =>
     apiRequest<{
@@ -190,7 +206,12 @@ export const api = {
     }>>('/positions', { token }),
 
   closePosition: (token: string, id: string) =>
-    apiRequest<{ success: boolean }>(`/positions/${id}/close`, {
+    apiRequest<{
+      success: boolean;
+      error?: string;
+      pnl?: number;
+      pnlPercent?: number;
+    }>(`/positions/${id}/close`, {
       method: 'POST',
       token,
     }),
@@ -560,4 +581,24 @@ export const api = {
         errorMessage: string | null;
       }>;
     }>(`/cron-logs?jobName=${jobName}&limit=${limit}`, { token }),
+
+  // Health & Reconciliation
+  getHealthDetailed: async (token: string) => {
+    const apiBase = getApiBase();
+    const res = await fetch(`${apiBase}/health/detailed`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch health status');
+    return res.json();
+  },
+
+  triggerReconciliation: async (token: string, dryRun: boolean = false) => {
+    const apiBase = getApiBase();
+    const res = await fetch(`${apiBase}/health/reconcile?dryRun=${dryRun}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to trigger reconciliation');
+    return res.json();
+  },
 };
