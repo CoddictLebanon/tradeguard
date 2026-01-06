@@ -7,6 +7,7 @@ const ALLOWED_IPS = [
   '::1',
   'localhost',
   '134.209.98.120', // Allowed external IP
+  '94.204.188.210', // Allowed external IP
 ];
 
 // Local network prefixes (private IP ranges)
